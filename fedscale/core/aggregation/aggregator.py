@@ -5,6 +5,7 @@ from fedscale.core.resource_manager import ResourceManager
 from fedscale.core import commons
 from fedscale.core.channels import job_api_pb2
 import fedscale.core.channels.job_api_pb2_grpc as job_api_pb2_grpc
+from fedscale.core.evofedlibs import init_resnet18
 from random import Random
 
 import torch
@@ -19,7 +20,7 @@ MAX_MESSAGE_LENGTH = 1*1024*1024*1024  # 1GB
 
 def get_init_model():
     from torchvision import models
-    return [models.resnet18(pretrained=False), models.resnet34(pretrained=False), models.resnet101(pretrained=False)]
+    return [init_resnet18(1), init_resnet18(2), init_resnet18(3)]
 
 class Aggregator(job_api_pb2_grpc.JobServiceServicer):
     """This centralized aggregator collects training/testing feedbacks from executors"""
