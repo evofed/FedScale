@@ -471,6 +471,9 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             if self.loss[model_id] > self.loss[i]:
                 model_id = i
         self.model = get_transformed_model(self.model[model_id])
+        for i in range(0, len(self.model)):
+            self.model_weights[i] = self.model[i].state_dict()
+        self.model_update_size = [sys.getsizeof(pickle.dumps(model)) / 1024.0 * 8 for model in self.model]
 
     def round_completion_handler(self):
         self.global_virtual_clock += self.round_duration
@@ -502,9 +505,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         if len(self.loss_accumulator):
             self.log_train_result(avg_loss)
 
-        if abs(self.last_avg_loss - avg_loss) < 0.1:
+        if abs(self.last_avg_loss - avg_loss) < 1:
             self.transform_model()
-            self.model_update_size = [sys.getsizeof(pickle.dumps(model)) / 1024.0 * 8 for model in self.model]
             self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
             self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
             self.loss = [1000 for _ in range(0, len(self.model))]
