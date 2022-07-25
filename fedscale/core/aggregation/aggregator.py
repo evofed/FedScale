@@ -7,6 +7,7 @@ from fedscale.core.channels import job_api_pb2
 import fedscale.core.channels.job_api_pb2_grpc as job_api_pb2_grpc
 from fedscale.core.evofedlibs import init_resnet18
 from random import Random
+from itertools import permutations
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
@@ -19,7 +20,10 @@ MAX_MESSAGE_LENGTH = 1*1024*1024*1024  # 1GB
 
 
 def get_init_model():
-    return [init_resnet18(1), init_resnet18(2)]
+    return [init_resnet18(1)]
+
+def get_transformed_model(model):
+    return [init_resnet18(1), init_resnet18(1), init_resnet18(1), init_resnet18(1), init_resnet18(1)]
 
 class Aggregator(job_api_pb2_grpc.JobServiceServicer):
     """This centralized aggregator collects training/testing feedbacks from executors"""
@@ -35,12 +39,16 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         self.model_rng = Random()
         self.model = get_init_model()
+        self.loss = [1000 for _ in range(0, len(self.model))]
+        # self.trained_model = 0
         self.mapped_models = {}
         self.test_model_id = 0
         self.test_result_accumulator = [[] for _ in range(0, len(self.model))]
         self.model_weights = [collections.OrderedDict() for _ in range(0, len(self.model))]
         self.tasks_round = [0 for _ in range(0, len(self.model))]
         self.model_in_update = [0 for _ in range(0, len(self.model))]
+        # self.max_learning_rate = self.args.learning_rate
+        self.last_avg_loss = 1000
 
         # ======== env information ========
         self.this_rank = 0
@@ -226,6 +234,11 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         logging.info("Info of all feasible clients {}".format(
             self.client_manager.getDataInfo()))
 
+    def get_permutation(self):
+        permutation = [i % len(self.model) for i in range(0, 4 * len(self.model))]
+        self.model_rng.shuffle(permutation)
+        return permutation
+
     def executor_info_handler(self, executorId, info):
 
         self.registered_executor_info.add(executorId)
@@ -237,26 +250,32 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
             if len(self.registered_executor_info) == len(self.executors):
                 self.client_register_handler(executorId, info)
-                probs = [1.0 / len(self.model) for _ in range(0, len(self.model))]
-                self.probs = [probs for _ in range(0, self.num_of_clients)]
+
+                self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
+                self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
+
                 self.round_completion_handler()
         else:
             # In real deployments, we need to register for each client
             self.client_register_handler(executorId, info)
             if len(self.registered_executor_info) == len(self.executors):
-                probs = [1.0 / len(self.model) for _ in range(0, len(self.model))]
-                self.probs = [probs for _ in range(0, self.num_of_clients)]
+                self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
+                self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
+
                 self.round_completion_handler()
 
     def select_model(self, client_id):
+        if len(self.permutation[client_id - 1]):
+            i = self.permutation[client_id - 1][-1]
+            self.permutation[client_id - 1].pop()
+            return i
+        
         prob = self.model_rng.random()
         for i in range(0, len(self.model)):
-            if prob <= self.probs[client_id - 1][i] / sum(self.probs[client_id - 1]):
+            if prob <= self.reward[client_id - 1][i] / sum(self.reward[client_id - 1]):
                 return i
-            prob -= self.probs[client_id - 1][i]
+            prob -= self.reward[client_id - 1][i]
         return len(self.model) - 1
-        
-
     
     def tictak_client_tasks(self, sampled_clients, num_clients_to_collect):
         if self.experiment_mode == commons.SIMULATION_MODE:
@@ -332,7 +351,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         )
 
     def get_model_similarity(self, id_i, id_j):
-        return self.model_rng.random() + 0.1
+        return 1 / (abs(id_i - id_j) + 1)
 
     def client_completion_handler(self, results, client_id):
         """We may need to keep all updates from clients,
@@ -360,14 +379,22 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.update_lock.acquire()
 
         for i in range(0, len(self.model)):
-            self.probs[client_id - 1][i] += self.get_model_similarity(mapped_model[client_id], i) * results['moving_loss']
-
+            self.reward[client_id - 1][i] += self.get_model_similarity(self.mapped_models[client_id], i) * results['moving_loss']
+        
+        model_id = self.mapped_models[client_id]
+        if self.loss[model_id] == 1000:
+            self.loss[model_id] = results['moving_loss']
+        else:
+            self.loss[model_id] = 0.95 * self.loss[model_id] + 0.05 * results['moving_loss']
+            
         mapped_model = self.mapped_models[client_id]
         self.model_in_update[mapped_model] += 1
         if self.using_group_params == True:
             self.aggregate_client_group_weights(results, client_id)
         else:
             self.aggregate_client_weights(results, client_id)
+            
+        
         self.update_lock.release()
 
     def aggregate_client_weights(self, results, client_id):
@@ -439,6 +466,13 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                     self.optimizer.update_round_gradient(
                         last_model[i], current_grad_weights, self.model[i])
 
+    def transform_model(self):
+        model_id = 0
+        for i in range(1, len(self.model)):
+            if self.loss[model_id] > self.loss[i]:
+                model_id = i
+        self.model = get_transformed_model(self.model[model_id])
+
     def round_completion_handler(self):
         self.global_virtual_clock += self.round_duration
         self.round += 1
@@ -469,6 +503,18 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         if len(self.loss_accumulator):
             self.log_train_result(avg_loss)
 
+        if abs(self.last_avg_loss - avg_loss) < 0.1:
+            self.model = self.transform_model()
+            self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
+            self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
+            self.loss = [1000 for _ in range(0, len(self.model))]
+            self.last_avg_loss = 1000
+            logging.info("FL Transforming")
+        elif self.last_avg_loss == 1000:
+            self.last_avg_loss = avg_loss
+        else:
+            self.last_avg_loss = 0.95 * self.last_avg_loss + 0.05 * avg_loss
+
         # update select participants
         self.sampled_participants = self.select_participants(
             select_num_participants=self.args.num_participants, overcommitment=self.args.overcommitment)
@@ -496,7 +542,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.flatten_client_duration = numpy.array(flatten_client_duration)
         self.round_duration = round_duration
         self.model_in_update = [0 for _ in range(0, len(self.model))]
-        self.test_result_accumulator = [[] for i in range(0, len(self.model))]
+        self.test_result_accumulator = [[] for _ in range(0, len(self.model))]
         self.stats_util_accumulator = []
         self.client_training_results = []
 
