@@ -513,6 +513,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             self.loss = [1000 for _ in range(0, len(self.model))]
             self.last_avg_loss = 1000
             logging.info("FL Transforming")
+        elif avg_loss == 0:
+            pass
         elif self.last_avg_loss == 1000:
             self.last_avg_loss = avg_loss
         else:
