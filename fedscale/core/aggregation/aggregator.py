@@ -7,7 +7,6 @@ from fedscale.core.channels import job_api_pb2
 import fedscale.core.channels.job_api_pb2_grpc as job_api_pb2_grpc
 from fedscale.core.evofedlibs import init_resnet18
 from random import Random
-from itertools import permutations
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
