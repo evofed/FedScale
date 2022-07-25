@@ -86,7 +86,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.sampled_executors = []
 
         self.round_stragglers = []
-        self.model_update_size = 0.
+        self.model_update_size = []
 
         self.collate_fn = None
         self.task = args.task
@@ -503,7 +503,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             self.log_train_result(avg_loss)
 
         if abs(self.last_avg_loss - avg_loss) < 0.1:
-            self.model = self.transform_model()
+            self.transform_model()
+            self.model_update_size = [sys.getsizeof(pickle.dumps(model)) / 1024.0 * 8 for model in self.model]
             self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
             self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
             self.loss = [1000 for _ in range(0, len(self.model))]
