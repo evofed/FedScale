@@ -506,7 +506,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         if len(self.loss_accumulator):
             self.log_train_result(avg_loss)
 
-        if abs(self.last_avg_loss - avg_loss) < 1:
+        if abs(self.last_avg_loss - avg_loss) < 0.01:
             self.transform_model()
             self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
             self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
