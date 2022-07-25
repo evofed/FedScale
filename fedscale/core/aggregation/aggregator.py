@@ -471,6 +471,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             if self.loss[model_id] > self.loss[i]:
                 model_id = i
         self.model = get_transformed_model(self.model[model_id])
+        self.model_weights = [collections.OrderedDict() for _ in range(0, len(self.model))]
         for i in range(0, len(self.model)):
             self.model_weights[i] = self.model[i].state_dict()
         self.model_update_size = [sys.getsizeof(pickle.dumps(model)) / 1024.0 * 8 for model in self.model]
