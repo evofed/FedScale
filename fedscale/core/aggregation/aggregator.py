@@ -426,7 +426,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 self.model_weights[model_id][p].data = (
                     self.model_weights[model_id][p] / float(self.tasks_round[model_id])).to(dtype=d_type)
             self.curr_model_loss[model_id] = self.curr_model_loss[model_id] / self.tasks_round[model_id]
-            if abs(self.curr_model_loss[model_id] - self.last_model_loss[model_id]) < 1:
+            if abs(self.curr_model_loss[model_id] - self.last_model_loss[model_id]) < 0.005:
                 self.converged[model_id] = 1
 
     def aggregate_client_group_weights(self, results, client_id):
