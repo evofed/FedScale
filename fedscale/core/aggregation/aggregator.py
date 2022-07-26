@@ -250,7 +250,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
                 self.last_model_loss = [1000 for _ in range(0, len(self.model))]
                 self.curr_model_loss = [0 for _ in range(0, len(self.model))]
-                self.converged = [0 for _ in range(0, len(self).model)]
+                self.converged = [0 for _ in range(0, len(self.model))]
                 self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
                 self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
 
@@ -262,7 +262,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
                 self.last_model_loss = [1000 for _ in range(0, len(self.model))]
                 self.curr_model_loss = [0 for _ in range(0, len(self.model))]
-                self.converged = [0 for _ in range(0, len(self).model)]
+                self.converged = [0 for _ in range(0, len(self.model))]
                 self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
                 self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
 
@@ -512,7 +512,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             self.transform_model()
             self.last_model_loss = [1000 for _ in range(0, len(self.model))]
             self.curr_model_loss = [0 for _ in range(0, len(self.model))]
-            self.converged = [0 for _ in range(0, len(self).model)]
+            self.converged = [0 for _ in range(0, len(self.model))]
             self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
             self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
             
