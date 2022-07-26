@@ -470,7 +470,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
     def transform_model(self):
         model_id = 0
         for i in range(1, len(self.model)):
-            if self.loss[model_id] > self.loss[i]:
+            if self.last_model_loss[model_id] > self.last_model_loss[i]:
                 model_id = i
         self.model = get_transformed_model(self.model[model_id])
         self.model_weights = [collections.OrderedDict() for _ in range(0, len(self.model))]
@@ -508,6 +508,10 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         if len(self.loss_accumulator):
             self.log_train_result(avg_loss)
 
+        for i in range(0, len(self.model)):
+            if self.curr_model_loss[i] != 0:
+                self.last_model_loss[i] = self.curr_model_loss[i]
+
         if sum(self.converged) == len(self.model):
             self.transform_model()
             self.last_model_loss = [1000 for _ in range(0, len(self.model))]
@@ -518,7 +522,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             
             logging.info("FL Transforming")
         else:
-            self.last_model_loss = self.curr_model_loss
             self.curr_model_loss = [0 for _ in range(0, len(self.model))]
 
         # update select participants
