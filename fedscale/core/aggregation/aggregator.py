@@ -38,7 +38,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         self.model_rng = Random()
         self.model = get_init_model()
-        self.loss = [1000 for _ in range(0, len(self.model))]
         # self.trained_model = 0
         self.mapped_models = {}
         self.test_model_id = 0
@@ -47,7 +46,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.tasks_round = [0 for _ in range(0, len(self.model))]
         self.model_in_update = [0 for _ in range(0, len(self.model))]
         # self.max_learning_rate = self.args.learning_rate
-        self.last_avg_loss = 1000
 
         # ======== env information ========
         self.this_rank = 0
@@ -250,6 +248,9 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             if len(self.registered_executor_info) == len(self.executors):
                 self.client_register_handler(executorId, info)
 
+                self.last_model_loss = [1000 for _ in range(0, len(self.model))]
+                self.curr_model_loss = [0 for _ in range(0, len(self.model))]
+                self.converged = [0 for _ in range(0, len(self).model)]
                 self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
                 self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
 
@@ -258,6 +259,10 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             # In real deployments, we need to register for each client
             self.client_register_handler(executorId, info)
             if len(self.registered_executor_info) == len(self.executors):
+
+                self.last_model_loss = [1000 for _ in range(0, len(self.model))]
+                self.curr_model_loss = [0 for _ in range(0, len(self.model))]
+                self.converged = [0 for _ in range(0, len(self).model)]
                 self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
                 self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
 
@@ -379,20 +384,13 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         for i in range(0, len(self.model)):
             self.reward[client_id - 1][i] += self.get_model_similarity(self.mapped_models[client_id], i) * results['moving_loss']
-        
-        model_id = self.mapped_models[client_id]
-        if self.loss[model_id] == 1000:
-            self.loss[model_id] = results['moving_loss']
-        else:
-            self.loss[model_id] = 0.95 * self.loss[model_id] + 0.05 * results['moving_loss']
-            
+                
         mapped_model = self.mapped_models[client_id]
         self.model_in_update[mapped_model] += 1
         if self.using_group_params == True:
             self.aggregate_client_group_weights(results, client_id)
         else:
             self.aggregate_client_weights(results, client_id)
-            
         
         self.update_lock.release()
 
@@ -420,12 +418,16 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             else:
                 self.model_weights[model_id][p].data += param_weight
 
+        self.curr_model_loss[model_id] += results['moving_loss']
         if self.model_in_update[model_id] == self.tasks_round[model_id]:
             for p in self.model_weights[model_id]:
                 d_type = self.model_weights[model_id][p].data.dtype
 
                 self.model_weights[model_id][p].data = (
                     self.model_weights[model_id][p] / float(self.tasks_round[model_id])).to(dtype=d_type)
+            self.curr_model_loss[model_id] = self.curr_model_loss[model_id] / self.tasks_round[model_id]
+            if abs(self.curr_model_loss[model_id] - self.last_model_loss[model_id]) < 1:
+                self.converged[model_id] = 1
 
     def aggregate_client_group_weights(self, results, client_id):
         """Streaming weight aggregation. Similar to aggregate_client_weights,
@@ -506,19 +508,18 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         if len(self.loss_accumulator):
             self.log_train_result(avg_loss)
 
-        if abs(self.last_avg_loss - avg_loss) < 0.01:
+        if sum(self.converged) == len(self.model):
             self.transform_model()
+            self.last_model_loss = [1000 for _ in range(0, len(self.model))]
+            self.curr_model_loss = [0 for _ in range(0, len(self.model))]
+            self.converged = [0 for _ in range(0, len(self).model)]
             self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
             self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
-            self.loss = [1000 for _ in range(0, len(self.model))]
-            self.last_avg_loss = 1000
+            
             logging.info("FL Transforming")
-        elif avg_loss == 0:
-            pass
-        elif self.last_avg_loss == 1000:
-            self.last_avg_loss = avg_loss
         else:
-            self.last_avg_loss = 0.95 * self.last_avg_loss + 0.05 * avg_loss
+            self.last_model_loss = self.curr_model_loss
+            self.curr_model_loss = [0 for _ in range(0, len(self.model))]
 
         # update select participants
         self.sampled_participants = self.select_participants(
