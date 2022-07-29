@@ -216,6 +216,9 @@ parser.add_argument('--noise-max', default=0.5,
 parser.add_argument('--no-bidirectional', dest='bidirectional', action='store_false', default=True,
                     help='Turn off bi-directional RNNs, introduces lookahead convolution')
 
+# for evofed
+parser.add_argument('--candidate_capacity', default=5, type=int, help='number of candidate models during search')
+
 args, unknown = parser.parse_known_args()
 args.use_cuda = eval(args.use_cuda)
 

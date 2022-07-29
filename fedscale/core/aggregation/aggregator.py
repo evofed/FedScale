@@ -5,7 +5,7 @@ from fedscale.core.resource_manager import ResourceManager
 from fedscale.core import commons
 from fedscale.core.channels import job_api_pb2
 import fedscale.core.channels.job_api_pb2_grpc as job_api_pb2_grpc
-from fedscale.core.evofedlibs import init_resnet18
+from fedscale.core.model_manager import Model_Manager
 from random import Random
 
 import torch
@@ -18,11 +18,11 @@ from concurrent import futures
 MAX_MESSAGE_LENGTH = 1*1024*1024*1024  # 1GB
 
 
-def get_init_model():
-    return [init_resnet18(1)]
+# def get_init_model():
+#     return [init_resnet18(1)]
 
-def get_transformed_model(model):
-    return [init_resnet18(1), init_resnet18(1), init_resnet18(1), init_resnet18(1), init_resnet18(1)]
+# def get_transformed_model(model):
+#     return [init_resnet18(1), init_resnet18(1), init_resnet18(1), init_resnet18(1), init_resnet18(1)]
 
 class Aggregator(job_api_pb2_grpc.JobServiceServicer):
     """This centralized aggregator collects training/testing feedbacks from executors"""
@@ -36,15 +36,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.device = args.cuda_device if args.use_cuda else torch.device(
             'cpu')
 
-        self.model_rng = Random()
-        self.model = get_init_model()
-        # self.trained_model = 0
-        self.mapped_models = {}
-        self.test_model_id = 0
-        self.test_result_accumulator = [[] for _ in range(0, len(self.model))]
-        self.model_weights = [collections.OrderedDict() for _ in range(0, len(self.model))]
-        self.tasks_round = [0 for _ in range(0, len(self.model))]
-        self.model_in_update = [0 for _ in range(0, len(self.model))]
         # self.max_learning_rate = self.args.learning_rate
 
         # ======== env information ========
@@ -55,10 +46,21 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.client_manager = self.init_client_manager(args=args)
 
         # ======== model and data ========
+        self.model = None
+        self.model_in_update = [0 for _ in range(0, len(self.model))]
         self.update_lock = threading.Lock()
         # all weights including bias/#_batch_tracked (e.g., state_dict)
+        self.model_weights = [collections.OrderedDict() for _ in range(0, len(self.model))]
         self.last_gradient_weights = []  # only gradient variables
         self.model_state_dict = None
+
+        # ======== specialized model and data ========
+        self.model_rng = Random()
+        self.mapped_models = {}
+        self.test_model_id = 0
+        self.test_result_accumulator = [[] for _ in range(0, len(self.model))]
+        self.tasks_round = [0 for _ in range(0, len(self.model))]
+        self.weight_coeff = [[] for _ in range(0, len(self.model))]
         # NOTE: if <param_name, param_tensor> (e.g., model.parameters() in PyTorch), then False
         # True, if <param_name, list_param_tensors> (e.g., layer.get_weights() in Tensorflow)
         self.using_group_params = self.args.engine == commons.TENSORFLOW
@@ -109,12 +111,15 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.init_task_context()
 
     def setup_env(self):
+        """Set up experiments environment and server optimizer
+        """
         self.setup_seed(seed=1)
         self.optimizer = ServerOptimizer(
             self.args.gradient_policy, self.args, self.device)
 
     def setup_seed(self, seed=1):
-        """Set global random seed for better reproducibility"""
+        """Set global random seed for better reproducibility
+        """
         torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
         np.random.seed(seed)
@@ -160,8 +165,12 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         pass
 
     def init_model(self):
-        """Load model"""
+        """Load the model architecture and init model manager
+        """
         assert self.args.engine == commons.PYTORCH, "Please define model for non-PyTorch models"
+
+        self.model_manager = Model_Manager(init_model(), candidate_capacity=self.args.candidate_capacity)
+        self.model = [self.model_manager.base_model]
 
         # Initiate model parameters dictionary <param_name, param>
         # self.model_weights = self.model.state_dict()
@@ -169,7 +178,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             self.model_weights[i] = self.model[i].state_dict()
 
     def init_task_context(self):
-        """Initiate execution context for specific tasks"""
+        """Initiate execution context for specific tasks
+        """
         if self.args.task == "detection":
             cfg_from_file(self.args.cfg_file)
             np.random.seed(self.cfg.RNG_SEED)
@@ -219,10 +229,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             self.client_manager.registerClient(
                 executorId, clientId, size=_size, speed=systemProfile)
 
-            '''
-            need to register different duration for different rounds
-            So oort is invalidated? So we need to use random method instead
-            '''
+            # need to register different duration for different rounds
+            # So oort is invalidated? So we need to use random method instead
             self.client_manager.registerDuration(clientId, batch_size=self.args.batch_size,
                                                  upload_step=self.args.local_steps, upload_size=sum(self.model_update_size), download_size=sum(self.model_update_size))
             self.num_of_clients += 1
@@ -232,7 +240,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             self.client_manager.getDataInfo()))
 
     def get_permutation(self):
-        permutation = [i % len(self.model) for i in range(0, 4 * len(self.model))]
+        # for warm up
+        permutation = [i % len(self.model) for i in range(0, 4 * len(self.model))] # this is for warm up?
         self.model_rng.shuffle(permutation)
         return permutation
 
@@ -250,7 +259,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
                 self.last_model_loss = [1000 for _ in range(0, len(self.model))]
                 self.curr_model_loss = [0 for _ in range(0, len(self.model))]
-                self.converged = [0 for _ in range(0, len(self.model))]
+                self.converged = [0 for _ in range(0, len(self.model))] # [1(model if converged) for all model in self.model]
                 self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
                 self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
 
@@ -355,7 +364,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         )
 
     def get_model_similarity(self, id_i, id_j):
-        return 1 / (abs(id_i - id_j) + 1)
+        # return 1 / (abs(id_i - id_j) + 1)
+        return self.model_manager.get_candidate_similarity(id_i, id_j)
 
     def client_completion_handler(self, results, client_id):
         """We may need to keep all updates from clients,
@@ -382,15 +392,18 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # ================== Aggregate weights ======================
         self.update_lock.acquire()
 
+        # update reward
         for i in range(0, len(self.model)):
             self.reward[client_id - 1][i] += self.get_model_similarity(self.mapped_models[client_id], i) * results['moving_loss']
                 
         mapped_model = self.mapped_models[client_id]
         self.model_in_update[mapped_model] += 1
-        if self.using_group_params == True:
-            self.aggregate_client_group_weights(results, client_id)
-        else:
-            self.aggregate_client_weights(results, client_id)
+        assert not self.using_group_params, "not support aggregate using group parameters"
+        # if self.using_group_params == True:
+        #     self.aggregate_client_group_weights(results, client_id)
+        # else:
+        #     self.aggregate_client_weights(results, client_id)
+        self.aggregate_client_weights(results, client_id)
         
         self.update_lock.release()
 
@@ -404,27 +417,40 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # Importance of each update is 1/#_of_participants
         # importance = 1./self.tasks_round
 
-        model_id = self.mapped_models[client_id]
+        comming_model_id = self.mapped_models[client_id]
 
-        for p in results['update_weight']:
-            param_weight = results['update_weight'][p]
-            if isinstance(param_weight, list):
-                param_weight = np.asarray(param_weight, dtype=np.float32)
-            param_weight = torch.from_numpy(
-                param_weight).to(device=self.device)
+        # for p in results['update_weight']:
+        #     param_weight = results['update_weight'][p]
+        #     if isinstance(param_weight, list):
+        #         param_weight = np.asarray(param_weight, dtype=np.float32)
+        #     param_weight = torch.from_numpy(
+        #         param_weight).to(device=self.device)
 
-            if self.model_in_update[model_id] == 1:
-                self.model_weights[model_id][p].data = param_weight; 
-            else:
-                self.model_weights[model_id][p].data += param_weight
+        #     if self.model_in_update[model_id] == 1:
+        #         self.model_weights[model_id][p].data = param_weight; 
+        #     else:
+        #         self.model_weights[model_id][p].data += param_weight
 
-        self.curr_model_loss[model_id] += results['moving_loss']
+        # self.curr_model_loss[model_id] += results['moving_loss']
+
+        for model_id in range(len(self.model)):
+            self.model_weights[model_id], weight_coeff = self.model_manager.aggregate_weights(
+                self.model_weights[model_id], results['update_weight'],
+                model_id, comming_model_id
+            )
+            self.weight_coeff[model_id].append(weight_coeff)
+            # debug output
+            logging.info(f'aggregating weights of model {comming_model_id} of client {client_id} into model {model_id} with weight coefficient {weight_coeff}')
+
+
         if self.model_in_update[model_id] == self.tasks_round[model_id]:
+            assert len(self.weight_coeff[model_id]) == self.tasks_round[model_id], f"received weights {len(self.weight_coeff[model_id])} != tasks of this round {self.tasks_round[model_id]}"
             for p in self.model_weights[model_id]:
                 d_type = self.model_weights[model_id][p].data.dtype
 
                 self.model_weights[model_id][p].data = (
-                    self.model_weights[model_id][p] / float(self.tasks_round[model_id])).to(dtype=d_type)
+                    self.model_weights[model_id][p] / float(sum(self.weight_coeff[model_id]))).to(dtype=d_type)
+            self.weight_coeff[model_id] = []
             self.curr_model_loss[model_id] = self.curr_model_loss[model_id] / self.tasks_round[model_id]
             if abs(self.curr_model_loss[model_id] - self.last_model_loss[model_id]) < 0.005:
                 self.converged[model_id] = 1
@@ -472,7 +498,11 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         for i in range(1, len(self.model)):
             if self.last_model_loss[model_id] > self.last_model_loss[i]:
                 model_id = i
-        self.model = get_transformed_model(self.model[model_id])
+        # self.model = get_transformed_model(self.model[model_id])
+        self.model_manager.reset_base(model_id, candidate_capacity=self.args.candidate_capacity)
+        self.model_manager.translate_base_model()
+        self.model_manager.base_model_scale()
+        self.model = self.model_manager.candidate_models
         self.model_weights = [collections.OrderedDict() for _ in range(0, len(self.model))]
         for i in range(0, len(self.model)):
             self.model_weights[i] = self.model[i].state_dict()
@@ -513,14 +543,14 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 self.last_model_loss[i] = self.curr_model_loss[i]
 
         if sum(self.converged) == len(self.model):
+            logging.info("FL Transforming")
             self.transform_model()
             self.last_model_loss = [1000 for _ in range(0, len(self.model))]
             self.curr_model_loss = [0 for _ in range(0, len(self.model))]
             self.converged = [0 for _ in range(0, len(self.model))]
             self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
             self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
-            
-            logging.info("FL Transforming")
+            self.weight_coeff = [[] for _ in range(0, len(self.model))]
         else:
             self.curr_model_loss = [0 for _ in range(0, len(self.model))]
 
@@ -630,8 +660,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                                                             'test_len': accumulator['test_len']
                                                             }
 
-            logging.info("FL Testing in round: {}, virtual_clock: {}, top_1: {} %, top_5: {} %, test loss: {:.4f}, test len: {}"
-                         .format(self.round, self.global_virtual_clock, self.testing_history['perf'][self.round]['top_1'],
+            logging.info("FL Testing for model {} in round: {}, virtual_clock: {}, top_1: {} %, top_5: {} %, test loss: {:.4f}, test len: {}"
+                         .format(self.test_model_id, self.round, self.global_virtual_clock, self.testing_history['perf'][self.round]['top_1'],
                                  self.testing_history['perf'][self.round]['top_5'], self.testing_history['perf'][self.round]['loss'],
                                  self.testing_history['perf'][self.round]['test_len']))
 
