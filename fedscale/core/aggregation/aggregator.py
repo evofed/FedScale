@@ -46,7 +46,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.client_manager = self.init_client_manager(args=args)
 
         # ======== model and data ========
-        self.model = None
+        self.model = [None]
         self.model_in_update = [0 for _ in range(0, len(self.model))]
         self.update_lock = threading.Lock()
         # all weights including bias/#_batch_tracked (e.g., state_dict)
@@ -170,6 +170,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         assert self.args.engine == commons.PYTORCH, "Please define model for non-PyTorch models"
 
         self.model_manager = Model_Manager(init_model(), candidate_capacity=self.args.candidate_capacity)
+        self.model_manager.translate_base_model()
         self.model = [self.model_manager.base_model]
 
         # Initiate model parameters dictionary <param_name, param>
@@ -365,6 +366,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
     def get_model_similarity(self, id_i, id_j):
         # return 1 / (abs(id_i - id_j) + 1)
+        if id_i == id_j:
+            return 1.0
         return self.model_manager.get_candidate_similarity(id_i, id_j)
 
     def client_completion_handler(self, results, client_id):
@@ -431,20 +434,20 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         #     else:
         #         self.model_weights[model_id][p].data += param_weight
 
-        # self.curr_model_loss[model_id] += results['moving_loss']
+        self.curr_model_loss[comming_model_id] += results['moving_loss']
 
         for model_id in range(len(self.model)):
             self.model_weights[model_id], weight_coeff = self.model_manager.aggregate_weights(
                 self.model_weights[model_id], results['update_weight'],
-                model_id, comming_model_id
+                model_id, comming_model_id, self.device, len(self.weight_coeff[model_id]) == 0
             )
             self.weight_coeff[model_id].append(weight_coeff)
             # debug output
             logging.info(f'aggregating weights of model {comming_model_id} of client {client_id} into model {model_id} with weight coefficient {weight_coeff}')
 
 
-        if self.model_in_update[model_id] == self.tasks_round[model_id]:
-            assert len(self.weight_coeff[model_id]) == self.tasks_round[model_id], f"received weights {len(self.weight_coeff[model_id])} != tasks of this round {self.tasks_round[model_id]}"
+        if self.model_in_update[model_id] == sum(self.tasks_round):
+            assert len(self.weight_coeff[model_id]) == sum(self.tasks_round), f"received weights {len(self.weight_coeff[model_id])} != tasks of this round {sum(self.tasks_round)}"
             for p in self.model_weights[model_id]:
                 d_type = self.model_weights[model_id][p].data.dtype
 
@@ -454,6 +457,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             self.curr_model_loss[model_id] = self.curr_model_loss[model_id] / self.tasks_round[model_id]
             if abs(self.curr_model_loss[model_id] - self.last_model_loss[model_id]) < 0.005:
                 self.converged[model_id] = 1
+            logging.info(f'current loss of model {comming_model_id}: {self.curr_model_loss[model_id]}')
 
     def aggregate_client_group_weights(self, results, client_id):
         """Streaming weight aggregation. Similar to aggregate_client_weights,
@@ -503,7 +507,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.model_manager.translate_base_model()
         self.model_manager.base_model_scale()
         self.model = self.model_manager.candidate_models
-        self.model_weights = [collections.OrderedDict() for _ in range(0, len(self.model))]
+        self.model_weights = [model.state_dict() for model in self.model]
         for i in range(0, len(self.model)):
             self.model_weights[i] = self.model[i].state_dict()
         self.model_update_size = [sys.getsizeof(pickle.dumps(model)) / 1024.0 * 8 for model in self.model]
