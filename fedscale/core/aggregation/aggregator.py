@@ -455,7 +455,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                     self.model_weights[model_id][p] / float(sum(self.weight_coeff[model_id]))).to(dtype=d_type)
             self.weight_coeff[model_id] = []
             self.curr_model_loss[model_id] = self.curr_model_loss[model_id] / self.tasks_round[model_id]
-            if abs(self.curr_model_loss[model_id] - self.last_model_loss[model_id]) < 0.005:
+            if abs(self.curr_model_loss[model_id] - self.last_model_loss[model_id]) < 0.0001:
                 self.converged[model_id] = 1
             logging.info(f'current loss of model {comming_model_id}: {self.curr_model_loss[model_id]}')
 
