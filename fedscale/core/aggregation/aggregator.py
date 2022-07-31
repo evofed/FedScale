@@ -447,7 +447,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                     self.model_weights[comming_model_id][p].data = results['update_weight'][p]
                 else:
                     self.model_weights[comming_model_id][p].data = results['update_weight'][p]
-            
+            logging.info(f'aggregating process {self.model_in_update[comming_model_id]}/{self.tasks_round[comming_model_id]} for client {client_id}')
             if self.model_in_update[comming_model_id] == self.tasks_round[comming_model_id]:
                 logging.info(f'averaging clients weights without soft aggregation')
                 for p in self.model_weights[comming_model_id]:
@@ -863,6 +863,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 executor_id, client_id, current_event, meta, data = self.sever_events_queue.popleft()
 
                 if current_event == commons.UPLOAD_MODEL:
+                    logging.info(f'received model uploading from client {client_id}')
                     self.client_completion_handler(
                         self.deserialize_response(data), int(client_id))
                     if len(self.stats_util_accumulator) == sum(self.tasks_round):

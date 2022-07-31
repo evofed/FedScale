@@ -108,7 +108,7 @@ class Executor(object):
 
     def run(self):
         self.setup_env()
-        self.model = self.init_model()
+        self.model = [self.init_model()]
         self.training_sets, self.testing_sets = self.init_data()
         self.setup_communication()
         self.event_monitor()
@@ -135,6 +135,7 @@ class Executor(object):
         train_res = self.training_handler(
             clientId=client_id, conf=client_conf, model_id=model_id)
 
+        logging.info(f'uploading client {client_id} to aggregator')
         # Report execution completion meta information
         response = self.aggregator_communicator.stub.CLIENT_EXECUTE_COMPLETION(
             job_api_pb2.CompleteRequest(
