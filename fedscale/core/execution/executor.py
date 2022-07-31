@@ -135,7 +135,6 @@ class Executor(object):
         train_res = self.training_handler(
             clientId=client_id, conf=client_conf, model_id=model_id)
 
-        logging.info(f'uploading client {client_id} to aggregator')
         # Report execution completion meta information
         response = self.aggregator_communicator.stub.CLIENT_EXECUTE_COMPLETION(
             job_api_pb2.CompleteRequest(
@@ -307,6 +306,7 @@ class Executor(object):
                     client_id, train_res = self.Train(train_config)
 
                     # Upload model updates
+                    logging.info(f'uploading client {client_id} to aggregator')
                     _ = self.aggregator_communicator.stub.CLIENT_EXECUTE_COMPLETION.future(
                         job_api_pb2.CompleteRequest(client_id=str(client_id), executor_id=self.executor_id,
                                                     event=commons.UPLOAD_MODEL, status=True, msg=None,
