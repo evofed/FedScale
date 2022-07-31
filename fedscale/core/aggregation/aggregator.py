@@ -249,7 +249,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
     def executor_info_handler(self, executorId, info):
 
         self.registered_executor_info.add(executorId)
-        logging.info(f"Received executor {executorId} information, {len(self.registered_executor_info)}/{len(self.executors)}")
 
         # In this simulation, we run data split on each worker, so collecting info from one executor is enough
         # Waiting for data information from executors, or timeout
@@ -447,9 +446,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                     self.model_weights[comming_model_id][p].data = results['update_weight'][p]
                 else:
                     self.model_weights[comming_model_id][p].data = results['update_weight'][p]
-            logging.info(f'aggregating process {self.model_in_update[comming_model_id]}/{self.tasks_round[comming_model_id]} for client {client_id}')
             if self.model_in_update[comming_model_id] == self.tasks_round[comming_model_id]:
-                logging.info(f'averaging clients weights without soft aggregation')
                 for p in self.model_weights[comming_model_id]:
                     d_type = self.model_weights[comming_model_id][p].data.dtype
                     self.model_weights[comming_model_id][p].data = (
@@ -458,7 +455,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 self.curr_model_loss[comming_model_id] = self.curr_model_loss[comming_model_id] / self.tasks_round[comming_model_id]
                 if abs(self.curr_model_loss[comming_model_id] - self.last_model_loss[comming_model_id]) < 0.0001:
                     self.converged[comming_model_id] = 1
-                logging.info(f'current loss of model {comming_model_id}: {self.curr_model_loss[comming_model_id]}')
         else:
             for model_id in range(len(self.model)):
                 weight_coeff = self.model_manager.get_candidate_similarity(model_id, comming_model_id)
@@ -475,7 +471,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                         model_id, comming_model_id, self.model_in_update[model_id] == 1
                     )
                 # debug output
-                logging.info(f'aggregating weights of model {comming_model_id} of client {client_id} into model {model_id} with weight coefficient {weight_coeff}')
                 if self.model_in_update[model_id] == sum(self.tasks_round):
                     assert len(self.weight_coeff[model_id]) == sum(self.tasks_round), f"received weights {len(self.weight_coeff[model_id])} != tasks of this round {sum(self.tasks_round)}"
                     for p in self.model_weights[model_id]:
@@ -486,7 +481,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                     self.curr_model_loss[model_id] = self.curr_model_loss[model_id] / sum(self.weight_coeff[model_id])
                     if abs(self.curr_model_loss[model_id] - self.last_model_loss[model_id]) < 0.0001:
                         self.converged[model_id] = 1            
-                    logging.info(f'current loss of model {comming_model_id}: {self.curr_model_loss[model_id]}')
 
     def aggregate_client_group_weights(self, results, client_id):
         """Streaming weight aggregation. Similar to aggregate_client_weights,
@@ -808,7 +802,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 response_msg = self.get_shutdown_config(int(executor_id))
 
         if current_event != commons.DUMMY_EVENT:
-            logging.info(f"Issue EVENT ({current_event}) to EXECUTOR ({executor_id})")
+            logging.info(f"Issue EVENT ({current_event}) to EXECUTOR ({executor_id}) ")
         response_msg, response_data = self.serialize_response(
             response_msg), self.serialize_response(response_data)
         # NOTE: in simulation mode, response data is pickle for faster (de)serialization
@@ -863,7 +857,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 executor_id, client_id, current_event, meta, data = self.sever_events_queue.popleft()
 
                 if current_event == commons.UPLOAD_MODEL:
-                    logging.info(f'received model uploading from client {client_id}')
                     self.client_completion_handler(
                         self.deserialize_response(data), int(client_id))
                     if len(self.stats_util_accumulator) == sum(self.tasks_round):
