@@ -388,67 +388,54 @@ class Model_Manager():
         self.name2id = {} 
         self.translate_base_model()
 
-    def aggregate_weights(self, weights: OrderedDict, comming_weights: dict, model_id, comming_model_id, device, is_init: bool=False):
+    def aggregate_weights(self, weights_param, comming_weights_param, model_id, comming_model_id, device, is_init: bool=False):
         """
         softly add weight from comming model to model
         return aggregated weights and aggregation status
         """
         if model_id != comming_model_id:
             similarity = self.get_candidate_similarity(model_id, comming_model_id)
-            for param in weights.keys():
-                if param in comming_weights.keys():
-                    # change data type
-                    param_weight = comming_weights[param]
-                    if isinstance(param_weight, list):
-                        param_weight = np.asarray(param_weight, dtype=np.float32)
-                    param_weight = torch.from_numpy(param_weight).to(device=device)
-                    # check data type
-                    if weights[param].data.dtype == torch.int64:
-                        if is_init:
-                            weights[param].data = param_weight
-                        continue
-                    if len(comming_weights[param].shape) != len(weights[param].shape):
-                        raise Exception(f'weight {param} in model {model_id} and {comming_model_id} is not matched')
-                    if param_weight.shape == weights[param].shape:
-                        if is_init:
-                            weights[param].data = similarity * param_weight
-                        else:
-                            weights[param].data += similarity * param_weight
-                    share_boundary = []
-                    for i in range(len(weights[param].shape)):
-                        share_boundary.append(
-                            min(weights[param].shape[i], param_weight.shape[i])
-                        )
-                    if len(share_boundary) == 0:
-                        continue
-                    elif len(share_boundary) == 1:
-                        if is_init:
-                            weights[param].data[:share_boundary[0]] = similarity * param_weight[:share_boundary[0]]
-                        else:
-                            weights[param].data[:share_boundary[0]] += similarity * param_weight[:share_boundary[0]]
-                    elif len(share_boundary) == 2:
-                        if is_init:
-                            weights[param].data[:share_boundary[0], :share_boundary[1]] = similarity * param_weight[:share_boundary[0], :share_boundary[1]]
-                        else:
-                            weights[param].data[:share_boundary[0], :share_boundary[1]] += similarity * param_weight[:share_boundary[0], :share_boundary[1]]
-                    elif len(share_boundary) == 4:
-                        if is_init:
-                            weights[param].data[:share_boundary[0], :share_boundary[1], :share_boundary[2], :share_boundary[3]] =\
-                                similarity * param_weight[:share_boundary[0], :share_boundary[1], :share_boundary[2], :share_boundary[3]]
-                        else:
-                            weights[param].data[:share_boundary[0], :share_boundary[1], :share_boundary[2], :share_boundary[3]] +=\
-                                similarity * param_weight[:share_boundary[0], :share_boundary[1], :share_boundary[2], :share_boundary[3]]
-                    else:
-                        raise Exception(f'need to support {len(share_boundary)} dimension of weights')
-            return weights, similarity
+            # check data type
+            if weights_param.dtype == torch.int64:
+                if is_init:
+                    return comming_weights_param
+            if len(comming_weights_param.shape) != len(weights_param.shape):
+                raise Exception(f'weight {weights_param} in model {model_id} and {comming_model_id} is not matched')
+            if weights_param.shape == comming_weights_param.shape:
+                if is_init:
+                    weights_param = similarity * comming_weights_param
+                else:
+                    weights_param += similarity * comming_weights_param
+            share_boundary = []
+            for i in range(len(weights_param.shape)):
+                share_boundary.append(
+                    min(weights_param.shape[i], comming_weights_param.shape[i])
+                )
+            if len(share_boundary) == 0:
+                raise Exception(f'error aggregate {weights_param} in {is_init}init mode')
+            elif len(share_boundary) == 1:
+                if is_init:
+                    weights_param[:share_boundary[0]] = similarity * comming_weights_param[:share_boundary[0]]
+                else:
+                    weights_param[:share_boundary[0]] += similarity * comming_weights_param[:share_boundary[0]]
+            elif len(share_boundary) == 2:
+                if is_init:
+                    weights_param[:share_boundary[0], :share_boundary[1]] = similarity * comming_weights_param[:share_boundary[0], :share_boundary[1]]
+                else:
+                    weights_param[:share_boundary[0], :share_boundary[1]] += similarity * comming_weights_param[:share_boundary[0], :share_boundary[1]]
+            elif len(share_boundary) == 4:
+                if is_init:
+                    weights_param[:share_boundary[0], :share_boundary[1], :share_boundary[2], :share_boundary[3]] =\
+                        similarity * comming_weights_param[:share_boundary[0], :share_boundary[1], :share_boundary[2], :share_boundary[3]]
+                else:
+                    weights_param[:share_boundary[0], :share_boundary[1], :share_boundary[2], :share_boundary[3]] +=\
+                        similarity * comming_weights_param[:share_boundary[0], :share_boundary[1], :share_boundary[2], :share_boundary[3]]
+            else:
+                raise Exception(f'need to support {len(share_boundary)} dimension of weights')
+            return weights_param
                     
         else:
-            for param in weights.keys():
-                param_weight = comming_weights[param]
-                if isinstance(param_weight, list):
-                    param_weight = np.asarray(param_weight, dtype=np.float32)
-                param_weight = torch.from_numpy(param_weight).to(device=device)
-                if is_init:
-                    weights[param].data = param_weight
-                weights[param].data += param_weight
-            return weights, 1.0
+            if is_init:
+                weights_param = comming_weights_param
+            weights_param += comming_weights_param
+            return weights_param
