@@ -9,11 +9,11 @@ ps_ip: 10.0.0.1
 # E.g., master node has 4 available processes, then 1 for the ps, and worker should be set to: worker:3
 worker_ips: 
     - 10.0.0.1:[4]
-    - 10.0.0.2:[4]
-    - 10.0.0.3:[4]
-    - 10.0.0.4:[4]
-    - 10.0.0.5:[4]
-    - 10.0.0.6:[4]
+    # - 10.0.0.2:[4]
+    # - 10.0.0.3:[4]
+    # - 10.0.0.4:[4]
+    # - 10.0.0.5:[4]
+    # - 10.0.0.6:[4]
 
 exp_path: $FEDSCALE_HOME/fedscale/core
 
