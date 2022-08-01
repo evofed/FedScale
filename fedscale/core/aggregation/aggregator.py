@@ -776,7 +776,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 response_msg = self.get_shutdown_config(int(executor_id))
 
         if current_event != commons.DUMMY_EVENT:
-            logging.info(f"Issue EVENT ({current_event}) to EXECUTOR ({executor_id}) ")
+            logging.info(f"Issue EVENT ({current_event}) to EXECUTOR ({executor_id}) and CLIENT {client_id} ")
         response_msg, response_data = self.serialize_response(
             response_msg), self.serialize_response(response_data)
         # NOTE: in simulation mode, response data is pickle for faster (de)serialization
@@ -790,7 +790,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         execution_status, execution_msg = request.status, request.msg
         meta_result, data_result = request.meta_result, request.data_result
 
-        logging.info(f'got the execution completion infomation with event {event} from client {client_id}')
+        logging.info(f'got the execution completion infomation with event {event} from client {client_id} of executor {executor_id}')
 
         if event == commons.CLIENT_TRAIN:
             # Training results may be uploaded in CLIENT_EXECUTE_RESULT request later,
