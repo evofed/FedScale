@@ -17,13 +17,6 @@ from concurrent import futures
 
 MAX_MESSAGE_LENGTH = 1*1024*1024*1024  # 1GB
 
-
-# def get_init_model():
-#     return [init_resnet18(1)]
-
-# def get_transformed_model(model):
-#     return [init_resnet18(1), init_resnet18(1), init_resnet18(1), init_resnet18(1), init_resnet18(1)]
-
 class Aggregator(job_api_pb2_grpc.JobServiceServicer):
     """This centralized aggregator collects training/testing feedbacks from executors"""
 
@@ -367,7 +360,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         )
 
     def get_model_similarity(self, id_i, id_j):
-        # return 1 / (abs(id_i - id_j) + 1)
         if id_i == id_j:
             return 1.0
         return self.model_manager.get_candidate_similarity(id_i, id_j)
@@ -378,6 +370,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # Format:
         #       -results = {'clientId':clientId, 'update_weight': model_param, 'moving_loss': round_train_loss,
         #       'trained_size': count, 'wall_duration': time_cost, 'success': is_success 'utility': utility}
+
+        assert str(client_id) == str(results['clientId']), f"fail to match {str(client_id)} and {str(results['clientId'])}"
 
         if self.args.gradient_policy in ['q-fedavg']:
             self.client_training_results.append(results)
@@ -400,14 +394,9 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # update reward
         for i in range(0, len(self.model)):
             self.reward[client_id - 1][i] += self.get_model_similarity(self.mapped_models[client_id], i) * results['moving_loss']
-                
-        mapped_model = self.mapped_models[client_id]
-        self.model_in_update[mapped_model] += 1
+
         assert not self.using_group_params, "not support aggregate using group parameters"
-        # if self.using_group_params == True:
-        #     self.aggregate_client_group_weights(results, client_id)
-        # else:
-        #     self.aggregate_client_weights(results, client_id)
+
         self.aggregate_client_weights(results, client_id)
         
         self.update_lock.release()
@@ -420,94 +409,59 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         """
         # Start to take the average of updates, and we do not keep updates to save memory
         # Importance of each update is 1/#_of_participants
-        # importance = 1./self.tasks_round
-
-
-        model_id = self.mapped_models[client_id]
-        
-        
-        for p in results['update_weight']:
-            param_weight = results['update_weight'][p]
-            if isinstance(param_weight, list):
-                param_weight = np.asarray(param_weight, dtype=np.float32)
-            param_weight = torch.from_numpy(
-                param_weight).to(device=self.device)
-
-            if self.model_in_update[model_id] == 1:
-                self.model_weights[model_id][p].data = param_weight; 
-            else:
-                self.model_weights[model_id][p].data += param_weight
-
-        self.curr_model_loss[model_id] += results['moving_loss']
-        if self.model_in_update[model_id] == self.tasks_round[model_id]:
-            for p in self.model_weights[model_id]:
-                d_type = self.model_weights[model_id][p].data.dtype
-
-                self.model_weights[model_id][p].data = (
-                    self.model_weights[model_id][p] / float(self.tasks_round[model_id])).to(dtype=d_type)
-            self.curr_model_loss[model_id] = self.curr_model_loss[model_id] / self.tasks_round[model_id]
-            if abs(self.curr_model_loss[model_id] - self.last_model_loss[model_id]) < 0.005:
-                self.converged[model_id] = 1
-
 
         # check weight type
-        # for p in results['update_weight']:
-        #     if isinstance(results['update_weight'][p], list):
-        #         results['update_weight'][p] = np.asarray(results['update_weight'][p], dtype=np.float32)
-        #     results['update_weight'][p] = torch.from_numpy(
-        #         results['update_weight'][p]).to(device=self.device)
+        for p in results['update_weight']:
+            if isinstance(results['update_weight'][p], list):
+                results['update_weight'][p] = np.asarray(results['update_weight'][p], dtype=np.float32)
+            results['update_weight'][p] = torch.from_numpy(
+                results['update_weight'][p]).to(device=self.device)
         
-        # comming_model_id = self.mapped_models[client_id]
-        # if not need_soft:
-        #     self.curr_model_loss[comming_model_id] += results['moving_loss']
-        #     self.model_in_update[comming_model_id] += 1
-        #     for p in results['update_weight']:
-        #         if self.model_in_update[comming_model_id] == 1:
-        #             self.model_weights[comming_model_id][p].data = results['update_weight'][p]
-        #         else:
-        #             self.model_weights[comming_model_id][p].data = results['update_weight'][p]
-        #     if self.model_in_update[comming_model_id] == self.tasks_round[comming_model_id]:
-        #         for p in self.model_weights[comming_model_id]:
-        #             d_type = self.model_weights[comming_model_id][p].data.dtype
-        #             self.model_weights[comming_model_id][p].data = (
-        #                 self.model_weights[comming_model_id][p] / float(self.tasks_round[comming_model_id])).to(dtype=d_type)
-        #         self.weight_coeff[comming_model_id] = []
-        #         self.curr_model_loss[comming_model_id] = self.curr_model_loss[comming_model_id] / self.tasks_round[comming_model_id]
-        #         if abs(self.curr_model_loss[comming_model_id] - self.last_model_loss[comming_model_id]) < 0.0001:
-        #             self.converged[comming_model_id] = 1
-        # else:
-        #     for model_id in range(len(self.model)):
-        #         weight_coeff = self.model_manager.get_candidate_similarity(model_id, comming_model_id)
-        #         self.weight_coeff[model_id].append(weight_coeff)
-        #         self.curr_model_loss[model_id] += results['moving_loss'] * weight_coeff
-        #         self.model_in_update[model_id] += 1
+        comming_model_id = self.mapped_models[client_id]
+        if not need_soft:
+            self.curr_model_loss[comming_model_id] += results['moving_loss']
+            self.model_in_update[comming_model_id] += 1
+            for p in results['update_weight']:
+                if self.model_in_update[comming_model_id] == 1:
+                    self.model_weights[comming_model_id][p].data = results['update_weight'][p]
+                else:
+                    self.model_weights[comming_model_id][p].data += results['update_weight'][p]
+            if self.model_in_update[comming_model_id] == self.tasks_round[comming_model_id]:
+                for p in self.model_weights[comming_model_id]:
+                    d_type = self.model_weights[comming_model_id][p].data.dtype
+                    self.model_weights[comming_model_id][p].data = (
+                        self.model_weights[comming_model_id][p] / float(self.tasks_round[comming_model_id])).to(dtype=d_type)
+                self.weight_coeff[comming_model_id] = []
+                self.curr_model_loss[comming_model_id] = self.curr_model_loss[comming_model_id] / self.tasks_round[comming_model_id]
+                logging.info(f'current loss: {self.curr_model_loss[comming_model_id]}')
+                if abs(self.curr_model_loss[comming_model_id] - self.last_model_loss[comming_model_id]) < 0.0001:
+                    self.converged[comming_model_id] = 1
+        else:
+            for model_id in range(len(self.model)):
+                weight_coeff = self.model_manager.get_candidate_similarity(model_id, comming_model_id)
+                self.weight_coeff[model_id].append(weight_coeff)
+                self.curr_model_loss[model_id] += results['moving_loss'] * weight_coeff
+                self.model_in_update[model_id] += 1
 
-        #         for p in results['update_weight']:
-        #             if p not in self.model_weight[model_id].keys():
-        #                 continue
-        #             param_weight = results['update_weight'][p]
-        #             self.model_weights[model_id][p].data, weight_coeff = self.model_manager.aggregate_weights(
-        #                 self.model_weights[model_id][p].data, param_weight,
-        #                 model_id, comming_model_id, self.model_in_update[model_id] == 1
-        #             )
-        #         # debug output
-        #         if self.model_in_update[model_id] == sum(self.tasks_round):
-        #             assert len(self.weight_coeff[model_id]) == sum(self.tasks_round), f"received weights {len(self.weight_coeff[model_id])} != tasks of this round {sum(self.tasks_round)}"
-        #             for p in self.model_weights[model_id]:
-        #                 d_type = self.model_weights[model_id][p].data.dtype
-        #                 self.model_weights[model_id][p].data = (
-        #                     self.model_weights[model_id][p] / float(sum(self.weight_coeff[model_id]))).to(dtype=d_type)
-        #             self.weight_coeff[model_id] = []
-        #             self.curr_model_loss[model_id] = self.curr_model_loss[model_id] / sum(self.weight_coeff[model_id])
-        #             if abs(self.curr_model_loss[model_id] - self.last_model_loss[model_id]) < 0.0001:
-        #                 self.converged[model_id] = 1            
-
-    def aggregate_client_group_weights(self, results, client_id):
-        """Streaming weight aggregation. Similar to aggregate_client_weights,
-        but each key corresponds to a group of weights (e.g., for Tensorflow)"""
-
-        # this is not used nor implemented
-        pass
+                for p in results['update_weight']:
+                    if p not in self.model_weight[model_id].keys():
+                        continue
+                    param_weight = results['update_weight'][p]
+                    self.model_weights[model_id][p].data, weight_coeff = self.model_manager.aggregate_weights(
+                        self.model_weights[model_id][p].data, param_weight,
+                        model_id, comming_model_id, self.model_in_update[model_id] == 1
+                    )
+                # debug output
+                if self.model_in_update[model_id] == sum(self.tasks_round):
+                    assert len(self.weight_coeff[model_id]) == sum(self.tasks_round), f"received weights {len(self.weight_coeff[model_id])} != tasks of this round {sum(self.tasks_round)}"
+                    for p in self.model_weights[model_id]:
+                        d_type = self.model_weights[model_id][p].data.dtype
+                        self.model_weights[model_id][p].data = (
+                            self.model_weights[model_id][p] / float(sum(self.weight_coeff[model_id]))).to(dtype=d_type)
+                    self.weight_coeff[model_id] = []
+                    self.curr_model_loss[model_id] = self.curr_model_loss[model_id] / sum(self.weight_coeff[model_id])
+                    if abs(self.curr_model_loss[model_id] - self.last_model_loss[model_id]) < 0.0001:
+                        self.converged[model_id] = 1            
 
     def save_last_param(self):
         if self.args.engine == commons.TENSORFLOW:
