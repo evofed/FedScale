@@ -831,6 +831,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         execution_status, execution_msg = request.status, request.msg
         meta_result, data_result = request.meta_result, request.data_result
 
+        logging.info(f'got the execution completion infomation with event {event} from client {client_id} of executor {executor_id}')
+
         if event == commons.CLIENT_TRAIN:
             # Training results may be uploaded in CLIENT_EXECUTE_RESULT request later,
             # so we need to specify whether to ask client to do so (in case of straggler/timeout in real FL).

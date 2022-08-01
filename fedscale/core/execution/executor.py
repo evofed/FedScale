@@ -202,6 +202,7 @@ class Executor(object):
             clientId=client_id, conf=client_conf, model=model)
 
         # Report execution completion meta information
+        logging.info(f'reporting the training results of client {client_id}')
         response = self.aggregator_communicator.stub.CLIENT_EXECUTE_COMPLETION(
             job_api_pb2.CompleteRequest(
                 client_id=str(client_id), executor_id=self.executor_id,
@@ -209,6 +210,7 @@ class Executor(object):
                 meta_result=None, data_result=None
             )
         )
+        logging.info(f'finish reporting the training results of client {client_id} got response\n{response}')
         self.dispatch_worker_events(response)
 
         return client_id, train_res
