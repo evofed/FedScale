@@ -719,7 +719,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         """
         return pickle.dumps(responses)
 
-    def testing_completion_handler(self, client_id, results):
+    def testing_completion_handler(self, results):
         """Each executor will handle a subset of testing dataset
         
         Args:
