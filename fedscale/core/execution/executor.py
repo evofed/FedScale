@@ -288,7 +288,7 @@ class Executor(object):
         """
         return Client(conf)
 
-    def training_handler(self, clientId, conf, model=None):
+    def training_handler(self, clientId, conf, model_id):
         """Train model given client id
         
         Args:
@@ -321,7 +321,7 @@ class Executor(object):
 
         return train_res
 
-    def testing_handler(self, args):
+    def testing_handler(self, args, model_id):
         """Test model
         
         Args:
