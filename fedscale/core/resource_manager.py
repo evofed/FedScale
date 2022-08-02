@@ -1,5 +1,6 @@
-from fedscale.core import commons
 import threading
+
+from fedscale.core import commons
 
 
 class ResourceManager(object):
@@ -16,6 +17,17 @@ class ResourceManager(object):
         # TODO: append new checkin client
         self.client_run_queue = clientsToRun.copy()
         self.client_run_queue_idx = 0
+
+    def get_task_length(self) -> int:
+        """Number of tasks left in the queue
+
+        Returns:
+            int: Number of tasks left in the queue
+        """
+        self.update_lock.acquire()
+        remaining_task_num: int = len(self.client_run_queue) - self.client_run_queue_idx
+        self.update_lock.release()
+        return remaining_task_num
 
     def remove_client_task(self, client_id):
         assert(client_id in self.client_run_queue,
