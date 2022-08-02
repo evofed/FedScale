@@ -1,12 +1,17 @@
+<p align="center">
+<img src="./docs/imgs/FedScale-logo.png" width="300" height="55"/>
+</p>
 
-# FedScale
+[![](https://img.shields.io/badge/FedScale-Homepage-orange)](https://fedscale.ai/)
+[![](https://img.shields.io/badge/Benchmark-Submit%20Results-brightgreen)](https://fedscale.ai/docs/leader_overview)
+[![](https://img.shields.io/badge/FedScale-Join%20Slack-blue)](https://join.slack.com/t/fedscale/shared_invite/zt-uzouv5wh-ON8ONCGIzwjXwMYDC2fiKw)
 
-FedScale is a scalable and extensible open-source federated learning (FL) engine. 
-It provides high-level APIs to implement FL algorithms, deploy them at scale across diverse hardware and software backends, and evaluate them at scale.
+**FedScale is a scalable and extensible open-source federated learning (FL) engine and benchmark**. 
+
+FedScale ([fedscale.ai](https://fedscale.ai/)) provides high-level APIs to implement FL algorithms, deploy and evaluate them at scale across diverse hardware and software backends. 
 FedScale also includes the largest FL benchmark that contains FL tasks ranging from image classification and object detection to language modeling and speech recognition. 
 Moreover, it provides datasets to faithfully emulate FL training environments where FL will realistically be deployed.
 
-[http://fedscale.ai](http://fedscale.ai)
 
 ## Getting Started
 
@@ -28,8 +33,9 @@ If you have [Anaconda](https://www.anaconda.com/products/distribution#download-s
 cd FedScale
 
 # Please replace ~/.bashrc with ~/.bash_profile for MacOS
+FEDSCALE_HOME=$(pwd)
 echo export FEDSCALE_HOME=$(pwd) >> ~/.bashrc 
-echo "alias fedscale='bash $FEDSCALE_HOME/fedscale.sh'" >> ~/.bashrc 
+echo alias fedscale=\'bash $FEDSCALE_HOME/fedscale.sh\' >> ~/.bashrc 
 conda init bash
 . ~/.bashrc
 
