@@ -770,11 +770,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                                  self.testing_history['perf'][self.round]['top_5'], self.testing_history['perf'][self.round]['loss'],
                                  self.testing_history['perf'][self.round]['test_len']))
 
-        if len(self.test_result_accumulator) == len(self.executors):
-            
-            aggregate_test_result(
-                self.test_result_accumulator, self.args.task, \
-                self.round, self.global_virtual_clock, self.testing_history)
             # Dump the testing result
             with open(os.path.join(logDir, 'testing_perf'), 'wb') as fout:
                 pickle.dump(self.testing_history, fout)
