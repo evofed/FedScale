@@ -63,6 +63,7 @@ class Model_Manager():
         self.base_dag = None
         self.name2id = {} 
         self.candidate_models = [deepcopy(torch_model) for _ in range(candidate_capacity)]
+        self.layername2id = {}
 
     
     def translate_base_model(self):
@@ -129,6 +130,11 @@ class Model_Manager():
             for output in outputs:
                 for next_id in input2id[output]:
                     self.base_dag.add_edge(node_id, next_id)
+            
+        # construct layername2id dict
+        for node_id in self.base_dag.nodes():
+            if self.base_dag.nodes()[node_id]['attr'].operator in weight_operator:
+                self.layername2id[self.base_dag.nodes()[node_id]['attr'].name] = node_id
         
     def get_all_nodes(self):
         if self.base_dag == None:
@@ -304,6 +310,31 @@ class Model_Manager():
                 self.candidate_models[candidate_id], node.name
             )
 
+    def record_trajectary(self, candidate_id, widened_layers, deepened_layers):
+        layers = self.get_weighted_layers()
+        layers_onehot = np.array([0 for _ in range(len(layers))])
+        def nodeid2convid(node_id):
+            for i, conv in enumerate(layers):
+                if conv[0] == node_id:
+                    return i
+            raise Exception(f"not find node {node_id}")
+        # record widen trajectary
+        if len(self.widen_trajectary) == candidate_id:
+            self.widen_trajectary.append(layers_onehot)
+        else:
+            self.widen_trajectary[candidate_id] = layers_onehot
+        for node_id in widened_layers:
+            conv_id = nodeid2convid(node_id)
+            self.widen_trajectary[candidate_id][conv_id] = 1
+        # record deepen trajectary
+        if len(self.deepen_trajectary) == candidate_id:
+            self.deepen_trajectary.append(layers_onehot)
+        else:
+            self.deepen_trajectary[candidate_id] = layers_onehot
+        for node_id in deepened_layers:
+            conv_id = nodeid2convid(node_id)
+            self.deepen_trajectary[candidate_id][conv_id] = 1
+
     def base_model_scale(self, alpha: float=1.32, beta: float=1.21):
         """
         EfficientNet style model scaling
@@ -333,30 +364,15 @@ class Model_Manager():
                 if dice < deepen_p:
                     self.deepen_layer(candidate_id, node_id)
                     deepened_layers.append(node_id)
-            # record trajectary
-            layers = self.get_weighted_layers()
-            layers_onehot = np.array([0 for _ in range(len(layers))])
-            def nodeid2convid(node_id):
-                for i, conv in enumerate(layers):
-                    if conv[0] == node_id:
-                        return i
-                raise Exception(f"not find node {node_id}")
-            # record widen trajectary
-            if len(self.widen_trajectary) == candidate_id:
-                self.widen_trajectary.append(layers_onehot)
-            else:
-                self.widen_trajectary[candidate_id] = layers_onehot
-            for node_id in widened_layers:
-                conv_id = nodeid2convid(node_id)
-                self.widen_trajectary[candidate_id][conv_id] = 1
-            # record deepen trajectary
-            if len(self.deepen_trajectary) == candidate_id:
-                self.deepen_trajectary.append(layers_onehot)
-            else:
-                self.deepen_trajectary[candidate_id] = layers_onehot
-            for node_id in deepened_layers:
-                conv_id = nodeid2convid(node_id)
-                self.deepen_trajectary[candidate_id][conv_id] = 1
+            self.record_trajectary(candidate_id, widened_layers, deepened_layers)
+
+    def base_model_scale_fix(self, layers):
+        assert(len(layers) == len(self.candidate_models))
+        for candidate_id in range(len(self.candidate_models)):
+            node_id = self.layername2id[layers[candidate_id]]
+            widened_layers = self.widen_layer(candidate_id, node_id)
+            self.deepen_layer(candidate_id, node_id)
+            self.record_trajectary(candidate_id, widened_layers, [node_id])
     
     def get_candidate_distance(self, candidate_i, candidate_j):
         """

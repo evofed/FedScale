@@ -219,6 +219,7 @@ parser.add_argument('--no-bidirectional', dest='bidirectional', action='store_fa
 
 # for evofed
 parser.add_argument('--candidate_capacity', default=5, type=int, help='number of candidate models during search')
+parser.add_argument('--gradient_buffer_length', default=5, type=int, help='number of gradients maintained in the buffer')
 
 args, unknown = parser.parse_known_args()
 args.use_cuda = eval(args.use_cuda)

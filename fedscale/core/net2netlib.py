@@ -4,6 +4,16 @@ import numpy as np
 import torch
 import collections
 
+def get_model_layer_weight(torch_model, attri_name: str):
+    layer = get_model_layer(torch_model, attri_name)
+    return layer.weight.data
+
+
+def get_model_layer_grad(torch_model, attri_name: str):
+    layer = get_model_layer(torch_model, attri_name)
+    return layer.weight.grad.data
+
+
 def get_model_layer(torch_model, attri_name: str):
     if '.' in attri_name:
         attri_names = attri_name.split('.')

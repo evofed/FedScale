@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+from collections import defaultdict
 from fedscale.core.logger.aggragation import *
 from fedscale.core.resource_manager import ResourceManager
 from fedscale.core import commons
@@ -112,6 +113,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         # ======== Task specific ============
         self.init_task_context()
+        self.model_grads_buffer = defaultdict(defaultdict(list))
 
     def setup_env(self):
         """Set up experiments environment and server optimizer
@@ -494,11 +496,20 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                     self.model_weights[comming_model_id][p].data = results['update_weight'][p]
                 else:
                     self.model_weights[comming_model_id][p].data += results['update_weight'][p]
+            # aggregate layer gradients
+            for l in results['grad_dict']:
+                if self.model_in_update[comming_model_id] == 1:
+                    self.model_grads_buffer[comming_model_id][l].append(results['grad_dict'][l])
+                else:
+                    self.model_grads_buffer[comming_model_id][l][-1] += results['grad_dict'][l]
             if self.model_in_update[comming_model_id] == self.tasks_round[comming_model_id]:
                 for p in self.model_weights[comming_model_id]:
                     d_type = self.model_weights[comming_model_id][p].data.dtype
                     self.model_weights[comming_model_id][p].data = (
                         self.model_weights[comming_model_id][p] / float(self.tasks_round[comming_model_id])).to(dtype=d_type)
+                for l in self.model_grads_buffer[comming_model_id]:
+                    self.model_grads_buffer[comming_model_id][l][-1] = (
+                        self.model_grads_buffer[comming_model_id][l][-1] / float(self.tasks_round[comming_model_id]))
                 self.weight_coeff[comming_model_id] = []
                 self.curr_model_loss[comming_model_id] = self.curr_model_loss[comming_model_id] / self.tasks_round[comming_model_id]
                 logging.info(f'current loss: {self.curr_model_loss[comming_model_id]}')
@@ -515,8 +526,13 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                     if p not in self.model_weight[model_id].keys():
                         continue
                     param_weight = results['update_weight'][p]
-                    self.model_weights[model_id][p].data, weight_coeff = self.model_manager.aggregate_weights(
+                    self.model_weights[model_id][p].data = self.model_manager.aggregate_weights(
                         self.model_weights[model_id][p].data, param_weight,
+                        model_id, comming_model_id, self.model_in_update[model_id] == 1
+                    )
+                for l in results['grad_dict']:
+                    self.model_grads_buffer[model_id][l] = self.model_manager.aggregate_weights(
+                        self.model_grads_buffer[model_id][l], results['grad_dict'][l],
                         model_id, comming_model_id, self.model_in_update[model_id] == 1
                     )
                 # debug output
@@ -526,11 +542,13 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                         d_type = self.model_weights[model_id][p].data.dtype
                         self.model_weights[model_id][p].data = (
                             self.model_weights[model_id][p] / float(sum(self.weight_coeff[model_id]))).to(dtype=d_type)
+                    for l in self.model_grads_buffer[model_id]:
+                        self.model_grads_buffer[model_id][l][-1] = self.model_grads_buffer[model_id][l][-1] / float(sum(self.weight_coeff[model_id]))
                     self.weight_coeff[model_id] = []
                     self.curr_model_loss[model_id] = self.curr_model_loss[model_id] / sum(self.weight_coeff[model_id])
                     if abs(self.curr_model_loss[model_id] - self.last_model_loss[model_id]) < 0.0001:
-                        self.converged[model_id] = 1            
-
+                        self.converged[model_id] = 1
+            
     def save_last_param(self):
         """ Save the last model parameters
         """
@@ -577,7 +595,14 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # self.model = get_transformed_model(self.model[model_id])
         self.model_manager.reset_base(model_id, candidate_capacity=self.args.candidate_capacity)
         self.model_manager.translate_base_model()
-        self.model_manager.base_model_scale()
+        # self.model_manager.base_model_scale()
+        model_grad_rank = self.model_grads_buffer[model_id]
+        model_grad_rank = [[l, sum(model_grad_rank[l]) / float(len(model_grad_rank[l]))] for l in model_grad_rank]
+        def sort_by_second(l: list):
+            return l[1]
+        model_grad_rank.sort(key=sort_by_second())
+        selected_layers = [l[0] for l in model_grad_rank[-self.args.candidate_capacity:]]
+        self.model_manager.base_model_scale_fix(selected_layers)
         self.model = self.model_manager.candidate_models
         self.model_weights = [model.state_dict() for model in self.model]
         for i in range(0, len(self.model)):
@@ -597,6 +622,12 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         # handle the global update w/ current and last
         self.round_weight_handler(self.last_gradient_weights)
+
+        # maintain model gradients buffer
+        for model_id in len(self.model_grads_buffer):
+            for l in self.model_grads_buffer[model_id]:
+                if len(self.model_grads_buffer[model_id][l]) > self.args.gradient_buffer_length:
+                    self.model_grads_buffer[model_id][l].pop(0)
 
         avgUtilLastround = sum(self.stats_util_accumulator) / \
             max(1, len(self.stats_util_accumulator))

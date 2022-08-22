@@ -6,12 +6,15 @@ from torch.autograd import Variable
 
 from fedscale.core.execution.optimizers import ClientOptimizer
 from fedscale.dataloaders.nlp import mask_tokens
+from fedscale.core.net2netlib import get_model_layer_grad, get_model_layer_weight
 
 
 class Client(object):
     """Basic client component in Federated Learning"""
 
     def __init__(self, conf):
+        # conf: task, clientId, device, tokenizer, local_step, batch_size, gradient_policy, learning_rate, loss_decay
+        #       layer_names
         self.optimizer = ClientOptimizer()
         self.init_task(conf)
     
@@ -71,6 +74,14 @@ class Client(object):
 
         results['update_weight'] = model_param
         results['wall_duration'] = 0
+
+        # get layer gradient
+        grad_dict = dict()
+        for layer in self.conf.layer_names:
+            grad = get_model_layer_grad(model, layer)
+            weight = get_model_layer_weight(model, layer)
+            grad_dict[layer] = torch.norm(grad.data) / torch.norm(weight.data)
+        results['grad_dict'] = grad_dict
 
         return results
 
