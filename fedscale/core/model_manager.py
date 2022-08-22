@@ -9,6 +9,8 @@ import random
 import numpy as np
 import math
 
+from fedscale.dataloaders import transforms_stft
+
 omit_operator = ['Identity', 'Constant']
 conflict_operator = ['Add']
 weight_operator = ['Conv', 'Gemm']
@@ -51,6 +53,81 @@ class ONNX_Edge():
         else:
             self.name = self.operator
         
+def translate_model(model):
+    # 1. translate self.base_model to temporary onnx model
+    # 2. parse onnx model to directed acyclic diagram
+
+    name2id = {}
+    layername2id = {}
+
+    dummy_input = torch.randn(10, 3, 224, 224)
+    torch.onnx.export(model, dummy_input, 'tmp.onnx',
+        export_params=True, verbose=0, training=1, do_constant_folding=False)
+    onnx_model = onnx.load('tmp.onnx')
+    graph = onnx_model.graph
+    graph_string = printable_graph(graph)
+    start, end = graph_string.find('{'), graph_string.find('}')
+    graph_string = graph_string[start+2:end]
+    edge_list = graph_string.split('\n')
+    input2id = defaultdict(list)
+    dag = networkx.DiGraph() #
+    
+    # construct nodes
+    for edge_string in edge_list:
+        equal_pos = edge_string.find('=')
+        if equal_pos == -1:
+            continue
+        left, right = edge_string[:equal_pos], edge_string[equal_pos+1:]
+        # extract output nodes
+        outputs = left.strip()[1:].split(',')
+        outputs = [output.strip() for output in outputs]
+        
+        # extract operators
+        left_p = right.find('(')
+        func_sig = right[:left_p].strip()
+        left_pt = func_sig.find('[')
+        if left_pt == -1:
+            operator = func_sig[:left_p]
+        else:
+            operator = func_sig[:left_pt]
+        if operator in omit_operator:
+            continue
+
+        # extract all input nodes
+        left_p = right.find('(')
+        func_body = right[left_p+1:].strip()[:-1]
+        inputs = func_body.split(',')
+        inputs = [node.strip()[1:] for node in inputs]
+        tensor_inputs = []
+        param_inputs = []
+        for node in inputs:
+            if 'bias' in node or 'weight' in node:
+                param_inputs.append(node)
+            else:
+                tensor_inputs.append(node)
+        
+        # construct onnx node and networkx node
+        node = ONNX_Edge(tensor_inputs, outputs, param_inputs, operator)
+        node_id = len(dag.nodes())
+        name2id[node.name] = node_id #
+        dag.add_node(node_id, attr=node)
+        for tensor_input in node.tensor_inputs:
+            input2id[tensor_input].append(node_id)
+    
+    # construct edges
+    for node_id in dag.nodes():
+        outputs = dag.nodes()[node_id]['attr'].outputs
+        for output in outputs:
+            for next_id in input2id[output]:
+                dag.add_edge(node_id, next_id)
+        
+    # construct layername2id dict
+    for node_id in dag.nodes():
+        if dag.nodes()[node_id]['attr'].operator in weight_operator:
+            layername2id[dag.nodes()[node_id]['attr'].name] = node_id
+    
+    return dag, name2id, layername2id
+
 
 
 class Model_Manager():
@@ -61,81 +138,20 @@ class Model_Manager():
         self.widen_trajectary = []
         self.deepen_trajectary = []
         self.base_dag = None
-        self.name2id = {} 
+        self.candidate_dags = []
+        self.name2id = {}
         self.candidate_models = [deepcopy(torch_model) for _ in range(candidate_capacity)]
         self.layername2id = {}
 
     
     def translate_base_model(self):
-        # 1. translate self.base_model to temporary onnx model
-        # 2. parse onnx model to directed acyclic diagram
-
-        dummy_input = torch.randn(10, 3, 224, 224)
-        torch.onnx.export(self.base_model, dummy_input, 'tmp.onnx',
-            export_params=True, verbose=0, training=1, do_constant_folding=False)
-        onnx_model = onnx.load('tmp.onnx')
-        graph = onnx_model.graph
-        graph_string = printable_graph(graph)
-        start, end = graph_string.find('{'), graph_string.find('}')
-        graph_string = graph_string[start+2:end]
-        edge_list = graph_string.split('\n')
-        input2id = defaultdict(list)
-        self.base_dag = networkx.DiGraph()
-        
-        # construct nodes
-        for edge_string in edge_list:
-            equal_pos = edge_string.find('=')
-            if equal_pos == -1:
-                continue
-            left, right = edge_string[:equal_pos], edge_string[equal_pos+1:]
-            # extract output nodes
-            outputs = left.strip()[1:].split(',')
-            outputs = [output.strip() for output in outputs]
-            
-            # extract operators
-            left_p = right.find('(')
-            func_sig = right[:left_p].strip()
-            left_pt = func_sig.find('[')
-            if left_pt == -1:
-                operator = func_sig[:left_p]
-            else:
-                operator = func_sig[:left_pt]
-            if operator in omit_operator:
-                continue
-
-            # extract all input nodes
-            left_p = right.find('(')
-            func_body = right[left_p+1:].strip()[:-1]
-            inputs = func_body.split(',')
-            inputs = [node.strip()[1:] for node in inputs]
-            tensor_inputs = []
-            param_inputs = []
-            for node in inputs:
-                if 'bias' in node or 'weight' in node:
-                    param_inputs.append(node)
-                else:
-                    tensor_inputs.append(node)
-            
-            # construct onnx node and networkx node
-            node = ONNX_Edge(tensor_inputs, outputs, param_inputs, operator)
-            node_id = len(self.base_dag.nodes())
-            self.name2id[node.name] = node_id
-            self.base_dag.add_node(node_id, attr=node)
-            for tensor_input in node.tensor_inputs:
-                input2id[tensor_input].append(node_id)
-        
-        # construct edges
-        for node_id in self.base_dag.nodes():
-            outputs = self.base_dag.nodes()[node_id]['attr'].outputs
-            for output in outputs:
-                for next_id in input2id[output]:
-                    self.base_dag.add_edge(node_id, next_id)
-            
-        # construct layername2id dict
-        for node_id in self.base_dag.nodes():
-            if self.base_dag.nodes()[node_id]['attr'].operator in weight_operator:
-                self.layername2id[self.base_dag.nodes()[node_id]['attr'].name] = node_id
-        
+        self.base_dag, self.name2id, self.layername2id = translate_model(self.base_model)
+    
+    def translate_candidate_models(self):
+        for candidate_id in len(self.candidate_models):
+            dag, _, _ = translate_model(self.candidate_models[candidate_id])
+            self.candidate_dags.append(dag)
+                
     def get_all_nodes(self):
         if self.base_dag == None:
             self.translate_base_model()
@@ -159,6 +175,15 @@ class Model_Manager():
     def get_weighted_layers(self):
         layers = []
         for node_id in self.base_dag.nodes():
+            if self.base_dag.nodes()[node_id]['attr'].operator in weight_operator:
+                layers.append([node_id, self.base_dag.nodes()[node_id]['attr'].name])
+        return layers
+    
+    def get_candidate_layers(self, candidate_id):
+        if len(self.candidate_models) == 0:
+            return self.get_weighted_layers()
+        layers = []
+        for node_id in self.candidate_dags[candidate_id].nodes():
             if self.base_dag.nodes()[node_id]['attr'].operator in weight_operator:
                 layers.append([node_id, self.base_dag.nodes()[node_id]['attr'].name])
         return layers
@@ -401,6 +426,7 @@ class Model_Manager():
         self.widen_trajectary = []
         self.deepen_trajectary = []
         self.base_dag = None
+        self.candidate_dags = []
         self.name2id = {} 
         self.translate_base_model()
 

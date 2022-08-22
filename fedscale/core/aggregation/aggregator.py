@@ -596,6 +596,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.model_manager.reset_base(model_id, candidate_capacity=self.args.candidate_capacity)
         self.model_manager.translate_base_model()
         # self.model_manager.base_model_scale()
+        # choose layers
         model_grad_rank = self.model_grads_buffer[model_id]
         model_grad_rank = [[l, sum(model_grad_rank[l]) / float(len(model_grad_rank[l]))] for l in model_grad_rank]
         def sort_by_second(l: list):
@@ -603,6 +604,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         model_grad_rank.sort(key=sort_by_second())
         selected_layers = [l[0] for l in model_grad_rank[-self.args.candidate_capacity:]]
         self.model_manager.base_model_scale_fix(selected_layers)
+        self.model_manager.translate_candidate_models()
+
         self.model = self.model_manager.candidate_models
         self.model_weights = [model.state_dict() for model in self.model]
         for i in range(0, len(self.model)):
@@ -846,9 +849,11 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             dictionary: Client training config.
 
         """
+        model_id = self.mapped_models[clientId]
         conf = {
             'learning_rate': self.args.learning_rate,
-            'model': None  # none indicates we are using the global model
+            'model': None,  # none indicates we are using the global model
+            'layer_names': self.model_manager.get_candidate_layers(model_id)
         }
         return conf
 
