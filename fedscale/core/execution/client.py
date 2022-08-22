@@ -67,6 +67,14 @@ class Client(object):
         results['utility'] = math.sqrt(
             self.loss_squre)*float(trained_unique_samples)
 
+        # get layer gradient
+        grad_dict = dict()
+        for layer in self.conf.layer_names:
+            grad = get_model_layer_grad(model, layer)
+            weight = get_model_layer_weight(model, layer)
+            grad_dict[layer] = torch.norm(grad.data) / torch.norm(weight.data)
+        results['grad_dict'] = grad_dict
+        
         if error_type is None:
             logging.info(f"Training of (CLIENT: {clientId}) completes, {results}")
         else:
@@ -75,13 +83,6 @@ class Client(object):
         results['update_weight'] = model_param
         results['wall_duration'] = 0
 
-        # get layer gradient
-        grad_dict = dict()
-        for layer in self.conf.layer_names:
-            grad = get_model_layer_grad(model, layer)
-            weight = get_model_layer_weight(model, layer)
-            grad_dict[layer] = torch.norm(grad.data) / torch.norm(weight.data)
-        results['grad_dict'] = grad_dict
 
         return results
 
