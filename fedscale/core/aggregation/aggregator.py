@@ -113,7 +113,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         # ======== Task specific ============
         self.init_task_context()
-        self.model_grads_buffer = defaultdict(defaultdict(list))
+        self.model_grads_buffer = defaultdict(lambda: defaultdict(list))
 
     def setup_env(self):
         """Set up experiments environment and server optimizer
@@ -513,7 +513,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 self.weight_coeff[comming_model_id] = []
                 self.curr_model_loss[comming_model_id] = self.curr_model_loss[comming_model_id] / self.tasks_round[comming_model_id]
                 logging.info(f'current loss: {self.curr_model_loss[comming_model_id]}')
-                if abs(self.curr_model_loss[comming_model_id] - self.last_model_loss[comming_model_id]) < 0.0001:
+                if abs(self.curr_model_loss[comming_model_id] - self.last_model_loss[comming_model_id]) < self.args.convergent_threshold:
                     self.converged[comming_model_id] = 1
         else:
             for model_id in range(len(self.model)):
@@ -592,6 +592,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         for i in range(1, len(self.model)):
             if self.last_model_loss[model_id] > self.last_model_loss[i]:
                 model_id = i
+        logging.info(f'reset to model {model_id}')
         # self.model = get_transformed_model(self.model[model_id])
         self.model_manager.reset_base(model_id, candidate_capacity=self.args.candidate_capacity)
         self.model_manager.translate_base_model()
@@ -601,8 +602,14 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         model_grad_rank = [[l, sum(model_grad_rank[l]) / float(len(model_grad_rank[l]))] for l in model_grad_rank]
         def sort_by_second(l: list):
             return l[1]
-        model_grad_rank.sort(key=sort_by_second())
+        model_grad_rank.sort(key=sort_by_second)
         selected_layers = [l[0] for l in model_grad_rank[-self.args.candidate_capacity:]]
+
+        # reset model gradient buffer
+        for model_id in self.model_grads_buffer:
+            self.model_grads_buffer[model_id] = defaultdict(list)
+
+        logging.info(f'select layers {selected_layers} to scale up')
         self.model_manager.base_model_scale_fix(selected_layers)
         self.model_manager.translate_candidate_models()
 
@@ -627,10 +634,12 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.round_weight_handler(self.last_gradient_weights)
 
         # maintain model gradients buffer
-        for model_id in len(self.model_grads_buffer):
+        for model_id in range(len(self.model_grads_buffer)):
             for l in self.model_grads_buffer[model_id]:
                 if len(self.model_grads_buffer[model_id][l]) > self.args.gradient_buffer_length:
                     self.model_grads_buffer[model_id][l].pop(0)
+        
+        logging.info(f'(DEBUG) gradient buffer: {self.model_grads_buffer}')
 
         avgUtilLastround = sum(self.stats_util_accumulator) / \
             max(1, len(self.stats_util_accumulator))

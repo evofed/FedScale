@@ -28,6 +28,7 @@ class Client(object):
         self.epoch_train_loss = 1e-4
         self.completed_steps = 0
         self.loss_squre = 0
+        self.layer_names = conf.layer_names
 
     def train(self, client_data, model, conf):
 
@@ -69,10 +70,10 @@ class Client(object):
 
         # get layer gradient
         grad_dict = dict()
-        for layer in self.conf.layer_names:
-            grad = get_model_layer_grad(model, layer)
-            weight = get_model_layer_weight(model, layer)
-            grad_dict[layer] = torch.norm(grad.data) / torch.norm(weight.data)
+        for layer in self.layer_names:
+            grad = get_model_layer_grad(model, layer[1])
+            weight = get_model_layer_weight(model, layer[1])
+            grad_dict[layer[1]] = torch.norm(grad.data.cpu()) / torch.norm(weight.data.cpu())
         results['grad_dict'] = grad_dict
         
         if error_type is None:

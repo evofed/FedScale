@@ -8,12 +8,7 @@ ps_ip: 10.0.0.1
 # Note that if we collocate ps and worker on same GPU, then we need to decrease this number of available processes on that GPU by 1
 # E.g., master node has 4 available processes, then 1 for the ps, and worker should be set to: worker:3
 worker_ips: 
-    - 10.0.0.1:[4]
-    - 10.0.0.2:[4]
-    - 10.0.0.3:[4]
-    - 10.0.0.4:[4]
-    - 10.0.0.5:[4]
-    - 10.0.0.6:[4]
+    - 10.0.0.1:[4,4]
 
 exp_path: $FEDSCALE_HOME/fedscale/core
 
@@ -54,4 +49,6 @@ job_conf:
     - test_bsz: 20
     - use_cuda: True
     - candidate_capacity: 8
+    - convergent_threshold: 1
+    - gradient_buffer_length: 5
 

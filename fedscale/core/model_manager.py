@@ -1,4 +1,3 @@
-import logging
 import torch
 import networkx, onnx
 from onnx.helper import printable_graph
@@ -8,8 +7,6 @@ from copy import deepcopy
 import random
 import numpy as np
 import math
-
-from fedscale.dataloaders import transforms_stft
 
 omit_operator = ['Identity', 'Constant']
 conflict_operator = ['Add']
@@ -148,7 +145,7 @@ class Model_Manager():
         self.base_dag, self.name2id, self.layername2id = translate_model(self.base_model)
     
     def translate_candidate_models(self):
-        for candidate_id in len(self.candidate_models):
+        for candidate_id in range(len(self.candidate_models)):
             dag, _, _ = translate_model(self.candidate_models[candidate_id])
             self.candidate_dags.append(dag)
                 
@@ -180,12 +177,12 @@ class Model_Manager():
         return layers
     
     def get_candidate_layers(self, candidate_id):
-        if len(self.candidate_models) == 0:
+        if len(self.candidate_dags) == 0:
             return self.get_weighted_layers()
         layers = []
         for node_id in self.candidate_dags[candidate_id].nodes():
-            if self.base_dag.nodes()[node_id]['attr'].operator in weight_operator:
-                layers.append([node_id, self.base_dag.nodes()[node_id]['attr'].name])
+            if self.candidate_dags[candidate_id].nodes()[node_id]['attr'].operator in weight_operator:
+                layers.append([node_id, self.candidate_dags[candidate_id].nodes()[node_id]['attr'].name])
         return layers
 
     def get_base_parents(self, query_node_id):

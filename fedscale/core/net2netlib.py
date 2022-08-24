@@ -232,10 +232,14 @@ def widen_parent_ln(torch_model, layer_name, ratio: int=2, noise_factor=5e-2):
 def deepen(torch_model, layer_name):
     old_layer = deepcopy(get_model_layer(torch_model, layer_name))
     in_channels = old_layer.out_channels
-    kernel_size = old_layer.kernel_size
+    kernel_size = old_layer.kernel_size[0]
+    if (kernel_size - 1) % 2 == 0:
+        padding = (kernel_size - 1) // 2
+    else:
+        padding = 'same'
     new_conv = torch.nn.Conv2d(
         in_channels, in_channels, kernel_size,
-        padding='same', bias=False
+        padding=padding, bias=False
     )
     new_conv_param = new_conv.state_dict()
     new_conv_param['weight'] = torch.nn.init.dirac_(new_conv_param['weight'])
