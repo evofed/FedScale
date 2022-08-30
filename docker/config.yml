@@ -51,7 +51,7 @@ job_conf:
     - learning_rate: 0.05
     - batch_size: 20
     - test_bsz: 20
-    - use_cuda: True
+    - use_cuda: False
     - candidate_capacity: 8
     - convergent_threshold: 0
     - gradient_buffer_length: 5
