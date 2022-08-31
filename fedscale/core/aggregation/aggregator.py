@@ -180,7 +180,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         assert self.args.engine == commons.PYTORCH, "Please define model for non-PyTorch models"
 
         self.model_manager = Model_Manager(init_model(), candidate_capacity=self.args.candidate_capacity)
-        self.model_manager.translate_base_model()
+        self.model_manager.translate_base_model(self.args.task == 'speech')
         self.model = [self.model_manager.base_model]
 
         # Initiate model parameters dictionary <param_name, param>
@@ -595,7 +595,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         logging.info(f'reset to model {model_id}')
         # self.model = get_transformed_model(self.model[model_id])
         self.model_manager.reset_base(model_id, candidate_capacity=self.args.candidate_capacity)
-        self.model_manager.translate_base_model()
+        self.model_manager.translate_base_model(self.args.task == 'speech')
         # self.model_manager.base_model_scale()
         # choose layers
         model_grad_rank = self.model_grads_buffer[model_id]
@@ -611,7 +611,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         logging.info(f'select layers {selected_layers} to scale up')
         self.model_manager.base_model_scale_fix(selected_layers)
-        self.model_manager.translate_candidate_models()
+        self.model_manager.translate_candidate_models(self.args.task == 'speech')
 
         self.model = self.model_manager.candidate_models
         self.model_weights = [model.state_dict() for model in self.model]

@@ -50,14 +50,17 @@ class ONNX_Edge():
         else:
             self.name = self.operator
         
-def translate_model(model):
+def translate_model(model, is_speech):
     # 1. translate self.base_model to temporary onnx model
     # 2. parse onnx model to directed acyclic diagram
 
     name2id = {}
     layername2id = {}
 
-    dummy_input = torch.randn(10, 3, 224, 224)
+    if not is_speech:
+        dummy_input = torch.randn(10, 3, 224, 224)
+    else:
+        dummy_input = torch.randn(32, 1, 3, 3)
     torch.onnx.export(model, dummy_input, 'tmp.onnx',
         export_params=True, verbose=0, training=1, do_constant_folding=False)
     onnx_model = onnx.load('tmp.onnx')
@@ -141,17 +144,17 @@ class Model_Manager():
         self.layername2id = {}
 
     
-    def translate_base_model(self):
-        self.base_dag, self.name2id, self.layername2id = translate_model(self.base_model)
+    def translate_base_model(self, is_speech):
+        self.base_dag, self.name2id, self.layername2id = translate_model(self.base_model, is_speech)
     
-    def translate_candidate_models(self):
+    def translate_candidate_models(self, is_speech):
         for candidate_id in range(len(self.candidate_models)):
-            dag, _, _ = translate_model(self.candidate_models[candidate_id])
+            dag, _, _ = translate_model(self.candidate_models[candidate_id], is_speech)
             self.candidate_dags.append(dag)
                 
-    def get_all_nodes(self):
+    def get_all_nodes(self, is_speech):
         if self.base_dag == None:
-            self.translate_base_model()
+            self.translate_base_model(is_speech)
         nodes = []
         for node_id in self.base_dag.nodes():
             nodes.append(self.base_dag.nodes()[node_id]['attr'])
