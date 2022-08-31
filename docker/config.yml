@@ -49,6 +49,6 @@ job_conf:
     - test_bsz: 20
     - use_cuda: True
     - candidate_capacity: 8
-    - convergent_threshold: 0
+    - convergent_threshold: 0.001
     - gradient_buffer_length: 5
 
