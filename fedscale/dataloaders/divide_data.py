@@ -10,6 +10,7 @@ import numpy as np
 from torch.utils.data import DataLoader
 
 #from argParser import args
+from cifar_split import split_cifar10
 
 
 class Partition(object):
@@ -91,10 +92,12 @@ class DataPartitioner(object):
         for idx in range(sample_id):
             self.partitions[clientId_maps[idx]].append(idx)
 
-    def partition_data_helper(self, num_clients, data_map_file=None):
+    def partition_data_helper(self, num_clients, data_map_file=None, is_cifar = False):
 
         # read mapping file to partition trace
-        if data_map_file is not None:
+        if is_cifar:
+            self.cifar_partition(num_clients)
+        elif data_map_file is not None:
             self.trace_partition(data_map_file)
         else:
             self.uniform_partition(num_clients=num_clients)
@@ -112,6 +115,12 @@ class DataPartitioner(object):
             part_len = int(1./num_clients * data_len)
             self.partitions.append(indexes[0:part_len])
             indexes = indexes[part_len:]
+    
+    def cifar_partition(self, num_clients):
+        # heterofl style non-iid partition
+        data_split = split_cifar10(self.data, num_users=num_clients)
+        for data_idx in data_split:
+            self.partitions.append(data_idx)
 
     def use(self, partition, istest):
         resultIndex = self.partitions[partition]
