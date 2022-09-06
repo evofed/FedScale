@@ -51,12 +51,16 @@ class Client(object):
         criterion = self.get_criterion(conf)
         error_type = None
 
+        if conf.use_epoch:
+            conf.local_steps *= len(client_data)
+
+        logging.info(f'training {conf.local_steps} local steps')
+
         # TODO: One may hope to run fixed number of epochs, instead of iterations
         while self.completed_steps < conf.local_steps:
 
             try:
                 self.train_step(client_data, conf, model, optimizer, criterion)
-                self.completed_steps += 1
             except Exception as ex:
                 error_type = ex
                 break
@@ -235,10 +239,10 @@ class Client(object):
             self.optimizer.update_client_weight(
                 conf, model, self.global_model if self.global_model is not None else None)
 
-            # self.completed_steps += 1
+            self.completed_steps += 1
 
-            # if self.completed_steps == conf.local_steps:
-            #     break
+            if self.completed_steps == conf.local_steps:
+                break
 
 
     def test(self, conf):
