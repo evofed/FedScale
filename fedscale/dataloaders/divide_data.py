@@ -10,7 +10,7 @@ import numpy as np
 from torch.utils.data import DataLoader
 
 #from argParser import args
-from cifar_split import split_cifar10
+from fedscale.dataloaders.cifar_split import split_cifar10
 
 
 class Partition(object):
@@ -120,7 +120,8 @@ class DataPartitioner(object):
         # heterofl style non-iid partition
         data_split = split_cifar10(self.data, num_users=num_clients)
         for data_idx in data_split:
-            self.partitions.append(data_idx)
+            self.partitions.append(data_split[data_idx])
+        logging.info(self.partitions)
 
     def use(self, partition, istest):
         resultIndex = self.partitions[partition]

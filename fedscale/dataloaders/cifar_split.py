@@ -2,9 +2,9 @@ import numpy as np
 import torch
 
 def split_cifar10(dataset, num_users):
-    classes_size = dataset.classes_size
+    classes_size = len(dataset.classes)
     dataset = dataset
-    label = np.array(dataset.target)
+    label = np.array(dataset.targets)
     non_iid_n = 2
     shard_per_user = non_iid_n
     data_split = {i: [] for i in range(num_users)}
