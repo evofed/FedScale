@@ -230,6 +230,9 @@ class Client(object):
                     self.epoch_train_loss = (
                         1. - conf.loss_decay) * self.epoch_train_loss + conf.loss_decay * temp_loss
 
+            # if not temp_loss > 0:
+            #     logging.info(f'error temp loss {temp_loss}, info: {loss_list}, {loss}, {output}, {data}')
+
             # ========= Define the backward loss ==============
             optimizer.zero_grad()
             loss.backward()
