@@ -54,8 +54,6 @@ class Client(object):
         if conf.use_epoch:
             conf.local_steps *= len(client_data)
 
-        logging.info(f'training {conf.local_steps} local steps')
-
         # TODO: One may hope to run fixed number of epochs, instead of iterations
         while self.completed_steps < conf.local_steps:
 

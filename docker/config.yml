@@ -49,7 +49,7 @@ job_conf:
     - rounds: 5000                          # Number of rounds to run this training. We use 1000 in our paper, while it may converge w/ ~400 rounds
     - filter_less: 21                       # Remove clients w/ less than 21 samples
     - num_loaders: 0
-    - local_steps: 5
+    - local_steps: 250
     - learning_rate: 0.1
     - batch_size: 10
     - test_bsz: 32
@@ -57,5 +57,5 @@ job_conf:
     - candidate_capacity: 8
     - convergent_threshold: 0
     - gradient_buffer_length: 5
-    - use_epoch: True
+    - use_epoch: False
 
