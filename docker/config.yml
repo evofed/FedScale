@@ -9,6 +9,13 @@ ps_ip: 10.0.0.1
 # E.g., master node has 4 available processes, then 1 for the ps, and worker should be set to: worker:3
 worker_ips: 
     - 10.0.0.1:[2]
+    - 10.0.0.2:[2]
+    - 10.0.0.3:[2]
+    - 10.0.0.4:[2]
+    - 10.0.0.5:[2]
+    - 10.0.0.6:[2]
+    - 10.0.0.7:[2]
+    - 10.0.0.8:[2]
 
 exp_path: $FEDSCALE_HOME/fedscale/core
 
@@ -43,9 +50,9 @@ job_conf:
     - filter_less: 21                       # Remove clients w/ less than 21 samples
     - num_loaders: 0
     - local_steps: 20
-    - learning_rate: 0.05
-    - batch_size: 20
-    - test_bsz: 20
+    - learning_rate: 0.001
+    - batch_size: 32
+    - test_bsz: 32
     - use_cuda: False
     - candidate_capacity: 8
     - convergent_threshold: 0
