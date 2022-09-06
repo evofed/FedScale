@@ -236,6 +236,7 @@ class Client(object):
             # ========= Define the backward loss ==============
             optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
             optimizer.step()
 
             # ========= Weight handler ========================
