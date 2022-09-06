@@ -51,8 +51,10 @@ class Client(object):
         criterion = self.get_criterion(conf)
         error_type = None
 
-        if conf.use_epoch:
-            conf.local_steps *= len(client_data)
+        # if conf.use_epoch:
+        #     conf.local_steps *= len(client_data)
+
+        logging.info(f'data size: {len(client_data)}')
 
         # TODO: One may hope to run fixed number of epochs, instead of iterations
         while self.completed_steps < conf.local_steps:
