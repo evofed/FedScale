@@ -710,6 +710,10 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         if self.round >= self.args.rounds: 
             self.broadcast_aggregator_events(commons.SHUT_DOWN)
         elif self.round % self.args.eval_interval == 0:
+            for i, model in enumerate(self.model):
+                model_path = os.path.join(logDir, 'model_'+str(i)+'.pth.tar')
+                with open(model_path, 'wb') as model_out:
+                    pickle.dump(model, model_out)
             self.broadcast_aggregator_events(commons.UPDATE_MODEL)
             self.broadcast_aggregator_events(commons.MODEL_TEST)
         else:
