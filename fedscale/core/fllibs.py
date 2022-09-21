@@ -37,6 +37,9 @@ from fedscale.utils.model_test_module import test_model
 # FedScale model libs
 from fedscale.utils.models.model_provider import get_cv_model
 
+import fedscale.core.nasbench as nasbench
+
+
 tokenizer = None
 if args.task == 'nlp' or args.task == 'text_clf':
     from transformers import (AdamW, AlbertTokenizer, AutoConfig,
@@ -103,6 +106,11 @@ def init_model():
     global tokenizer
 
     logging.info("Initializing the model ...")
+
+    if args.nas:
+        config = {'name': 'infer.tiny', 'N':0, 'C':1, 'arch_str': '|nor_conv_3x3~0|+|nor_conv_3x3~0|nor_conv_3x3~1|+|skip_connect~0|nor_conv_3x3~1|nor_conv_3x3~2|', 'num_classes': 10}
+        model = nasbench.get_cell_based_tiny_net(config)
+        return model
 
     if args.task == 'nlp':
         config = AutoConfig.from_pretrained(
