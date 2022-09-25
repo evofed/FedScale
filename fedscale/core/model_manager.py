@@ -57,7 +57,7 @@ def translate_model(model):
     name2id = {}
     layername2id = {}
 
-    dummy_input = torch.randn(10, 3, 224, 224)
+    dummy_input = torch.randn(32, 1, 3, 3)
     torch.onnx.export(model, dummy_input, 'tmp.onnx',
         export_params=True, verbose=0, training=1, do_constant_folding=False)
     onnx_model = onnx.load('tmp.onnx')
