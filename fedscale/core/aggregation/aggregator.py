@@ -114,6 +114,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # ======== Task specific ============
         self.init_task_context()
         self.model_grads_buffer = defaultdict(lambda: defaultdict(list))
+        self.scaled_id = 0
+        self.train_loss_buffer = []
 
     def setup_env(self):
         """Set up experiments environment and server optimizer
@@ -179,7 +181,14 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         """
         assert self.args.engine == commons.PYTORCH, "Please define model for non-PyTorch models"
 
-        self.model_manager = Model_Manager(init_model(), candidate_capacity=self.args.candidate_capacity)
+        if self.args.model_name != 'None':
+            with open(f'/users/yuxuanzh/FedScale/docker/models/{self.args.model_name}.pth.tar', 'rb') as f:
+                logging.info(f'loading trained model')
+                model = pickle.load(f)
+        else:
+            model = init_model()
+
+        self.model_manager = Model_Manager(model, candidate_capacity=self.args.candidate_capacity)
         self.model_manager.translate_base_model()
         self.model = [self.model_manager.base_model]
 
@@ -512,9 +521,24 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                         self.model_grads_buffer[comming_model_id][l][-1] / float(self.tasks_round[comming_model_id]))
                 self.weight_coeff[comming_model_id] = []
                 self.curr_model_loss[comming_model_id] = self.curr_model_loss[comming_model_id] / self.tasks_round[comming_model_id]
+                self.train_loss_buffer.append(self.curr_model_loss[comming_model_id] / self.tasks_round[comming_model_id])
                 logging.info(f'current loss: {self.curr_model_loss[comming_model_id]}')
-                if abs(self.curr_model_loss[comming_model_id] - self.last_model_loss[comming_model_id]) < self.args.convergent_threshold:
-                    self.converged[comming_model_id] = 1
+                # if abs(self.curr_model_loss[comming_model_id] - self.last_model_loss[comming_model_id]) < self.args.convergent_threshold:
+                #     self.converged[comming_model_id] = 1
+                if len(self.train_loss_buffer) > 100:
+                    self.train_loss_buffer.pop(0)
+                    slope = abs(self.train_loss_buffer[0] - self.train_loss_buffer[-1]) / 100
+                    logging.info(f'current slope {slope}')
+                    if slope < self.args.convergent_threshold:
+                        self.converged[comming_model_id] = 1
+                    # slopes = [abs(self.train_loss_buffer[i+1] - self.train_loss_buffer[i]) for i in range(len(self.train_loss_buffer)-1)]
+                    # logging.info(f'current slope {slopes}')
+                    # converged = 1
+                    # for slope in slopes:
+                    #     if slope >= self.args.convergent_threshold:
+                    #         converged = 0
+                    #         break
+                    # self.converged[comming_model_id] = converged
         else:
             for model_id in range(len(self.model)):
                 weight_coeff = self.model_manager.get_candidate_similarity(model_id, comming_model_id)
@@ -546,8 +570,23 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                         self.model_grads_buffer[model_id][l][-1] = self.model_grads_buffer[model_id][l][-1] / float(sum(self.weight_coeff[model_id]))
                     self.weight_coeff[model_id] = []
                     self.curr_model_loss[model_id] = self.curr_model_loss[model_id] / sum(self.weight_coeff[model_id])
-                    if abs(self.curr_model_loss[model_id] - self.last_model_loss[model_id]) < 0.0001:
-                        self.converged[model_id] = 1
+                    self.train_loss_buffer.append(self.curr_model_loss[model_id] / sum(self.weight_coeff[model_id]))
+                    # if abs(self.curr_model_loss[model_id] - self.last_model_loss[model_id]) < 0.0001:
+                    #     self.converged[model_id] = 1
+                    if len(self.train_loss_buffer) > 100:
+                        self.train_loss_buffer.pop(0)
+                        slope = abs(self.train_loss_buffer[0] - self.train_loss_buffer[-1]) / 100
+                        logging.info(f'current slope {slope}')
+                        if slope < self.args.convergent_threshold:
+                            self.converged[model_id] = 1
+                        # slopes = [self.train_loss_buffer[i+1] - self.train_loss_buffer[i] for i in range(len(self.train_loss_buffer)-1)]
+                        # logging.info(f'current slope {slopes}')
+                        # converged = 1
+                        # for slope in slopes:
+                        #     if slope >= self.args.convergent_threshold:
+                        #         converged = 0
+                        #         break
+                        # self.converged[model_id] = converged
             
     def save_last_param(self):
         """ Save the last model parameters
@@ -586,34 +625,43 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                                             for param in self.model[i].parameters()]
                     self.optimizer.update_round_gradient(
                         last_model[i], current_grad_weights, self.model[i])
+    
+    def save_model(self):
+        model_path = os.path.join(logDir, 'model_'+str(self.scaled_id)+'.pth.tar')
+        with open(model_path, 'wb') as model_out:
+            pickle.dump(self.model[0], model_out)
+        self.scaled_id += 1
 
     def transform_model(self):
+        self.save_model()
         model_id = 0
         for i in range(1, len(self.model)):
             if self.last_model_loss[model_id] > self.last_model_loss[i]:
                 model_id = i
         logging.info(f'reset to model {model_id}')
-        # self.model = get_transformed_model(self.model[model_id])
-        self.model_manager.reset_base(model_id, candidate_capacity=self.args.candidate_capacity)
-        self.model_manager.translate_base_model()
-        # self.model_manager.base_model_scale()
-        # choose layers
-        model_grad_rank = self.model_grads_buffer[model_id]
-        model_grad_rank = [[l, sum(model_grad_rank[l]) / float(len(model_grad_rank[l]))] for l in model_grad_rank]
-        def sort_by_second(l: list):
-            return l[1]
-        model_grad_rank.sort(key=sort_by_second)
-        selected_layers = [l[0] for l in model_grad_rank[-self.args.candidate_capacity:]]
+        selected_layers = []
+        if self.args.mode == 'train-trans':
+            self.model_manager.translate_base_model()
+            # choose layers
+            model_grad_rank = self.model_grads_buffer[model_id]
+            model_grad_rank = [[l, sum(model_grad_rank[l]) / float(len(model_grad_rank[l]))] for l in model_grad_rank]
+            def sort_by_second(l: list):
+                return l[1]
+            model_grad_rank.sort(key=sort_by_second)
+            max_grad = model_grad_rank[-1][1]
+            for l in model_grad_rank:
+                if l[1] > 0.9 * max_grad:
+                    selected_layers.append(l[0])
+        elif self.args.mode == 'trans-train':
+            selected_layers = [self.args.selected_layers.split(',')]
 
         # reset model gradient buffer
         for model_id in self.model_grads_buffer:
             self.model_grads_buffer[model_id] = defaultdict(list)
 
         logging.info(f'select layers {selected_layers} to scale up')
-        self.model_manager.base_model_scale_fix(selected_layers)
-        self.model_manager.translate_candidate_models()
-
-        self.model = self.model_manager.candidate_models
+        self.model = [self.model_manager.tiny_model_scale(selected_layers)]
+        self.model_manager.translate_base_model()
         self.model_weights = [model.state_dict() for model in self.model]
         for i in range(0, len(self.model)):
             self.model_weights[i] = self.model[i].state_dict()
@@ -664,9 +712,11 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             if self.curr_model_loss[i] != 0:
                 self.last_model_loss[i] = self.curr_model_loss[i]
 
-        if sum(self.converged) == len(self.model):
+        if (sum(self.converged) == len(self.model) and self.args.model == 'train-trans') or \
+            (self.args.mode == 'trans-train' and self.round == 1):
             logging.info("FL Transforming")
             self.transform_model()
+            self.train_loss_buffer = []
             self.last_model_loss = [1000 for _ in range(0, len(self.model))]
             self.curr_model_loss = [0 for _ in range(0, len(self.model))]
             self.converged = [0 for _ in range(0, len(self.model))]
@@ -709,7 +759,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         if self.round >= self.args.rounds: 
             self.broadcast_aggregator_events(commons.SHUT_DOWN)
-        elif self.round % self.args.eval_interval == 0:
+        elif self.round % self.args.eval_interval == 0 or self.round == 1:
             for i, model in enumerate(self.model):
                 model_path = os.path.join(logDir, 'model_'+str(i)+'.pth.tar')
                 with open(model_path, 'wb') as model_out:

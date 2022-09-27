@@ -1,3 +1,5 @@
+import logging
+from typing import List
 import torch
 import networkx, onnx
 from onnx.helper import printable_graph
@@ -139,6 +141,7 @@ class Model_Manager():
         self.name2id = {}
         self.candidate_models = [deepcopy(torch_model) for _ in range(candidate_capacity)]
         self.layername2id = {}
+        self.last_scaled_layer = set()
 
     
     def translate_base_model(self):
@@ -357,6 +360,70 @@ class Model_Manager():
             conv_id = nodeid2convid(node_id)
             self.deepen_trajectary[candidate_id][conv_id] = 1
 
+    def widen_base_layer(self, node_id):
+        node_name = self.base_dag.nodes()[node_id]['attr'].name
+        children, parents, bns, ln_children, ln_parents = self.get_base_widen_instruction(node_id)
+        node = self.base_dag.nodes()[node_id]['attr']
+        if len(children) == 0 and len(ln_children) == 0:
+            print(f'fail to widen {node.name} as it is the last layer')
+            return []
+        if node.operator == 'Gemm':
+            ln_parents.append(node_id)
+        elif node_id not in parents:
+            parents.append(node_id)
+        for child in children:
+            node_name = self.base_dag.nodes()[child]['attr'].name
+            self.base_model = widen_child_conv(
+                self.base_model, node_name)
+        for parent in parents:
+            node_name = self.base_dag.nodes()[parent]['attr'].name
+            self.base_model = widen_parent_conv(
+                self.base_model, node_name)
+        for bn in bns:
+            node_name = self.base_dag.nodes()[bn]['attr'].name
+            self.base_model = widen_bn(
+                self.base_model, node_name)
+        for ln_child in ln_children:
+            node_name = self.base_dag.nodes()[ln_child]['attr'].name
+            self.base_model = widen_child_ln(
+                self.base_model, node_name
+            )
+        for ln_parent in ln_parents:
+            node_name = self.base_dag.nodes()[ln_child]['attr'].name
+            node_name = self.base_dag.nodes()[ln_parent]['attr'].name
+            self.base_model = widen_parent_ln(
+                self.base_model, node_name
+            )
+        return parents
+
+    def deepen_base_layer(self, node_id):
+        node = self.base_dag.nodes()[node_id]['attr']
+        if node.operator == 'Conv':
+            self.base_model = deepen(
+                self.base_model, node.name
+            )
+    
+    def tiny_model_scale(self, layers: List[str]):
+        widen_layers = []
+        deepen_layers = []
+        for layer in layers:
+            if layer in self.last_scaled_layer:
+                deepen_layers.append(layer)
+                self.last_scaled_layer.remove(layer)
+            else:
+                widen_layers.append(layer)
+                self.last_scaled_layer.add(layer)
+        for layer in widen_layers:
+            logging.info(f'widenning layer {layer}')
+            node_id = self.layername2id[layer]
+            self.widen_base_layer(node_id)
+        for layer in deepen_layers:
+            logging.info(f"deepening layer {layer}")
+            node_id = self.layername2id[layer]
+            self.deepen_base_layer(node_id)
+        logging.info(self.base_model)
+        return self.base_model
+    
     def base_model_scale(self, alpha: float=1.32, beta: float=1.21):
         """
         EfficientNet style model scaling
@@ -391,9 +458,15 @@ class Model_Manager():
     def base_model_scale_fix(self, layers):
         assert(len(layers) == len(self.candidate_models))
         for candidate_id in range(len(self.candidate_models)):
-            node_id = self.layername2id[layers[candidate_id]]
-            widened_layers = self.widen_layer(candidate_id, node_id)
-            self.deepen_layer(candidate_id, node_id)
+            deepened_layers = []
+            widened_layers = []
+            for layer in layers[candidate_id]:
+                node_id = self.layername2id[layer]
+                widened_layers += self.widen_layer(candidate_id, node_id)
+            for layer in layers[candidate_id]:
+                node_id = self.layername2id[layer]
+                self.deepen_layer(candidate_id, node_id)
+                deepened_layers.append(node_id)
             self.record_trajectary(candidate_id, widened_layers, [node_id])
     
     def get_candidate_distance(self, candidate_i, candidate_j):
