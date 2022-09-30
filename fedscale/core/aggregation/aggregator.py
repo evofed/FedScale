@@ -421,6 +421,10 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             file_path=self.args.device_conf_file)
 
         self.event_monitor()
+        # self.test_all_client()
+
+    # def test_all_client(self):
+
 
     def select_participants(self, select_num_participants, overcommitment=1.3):
         """Select clients for next round.
@@ -437,6 +441,9 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             int(select_num_participants*overcommitment),
             cur_time=self.global_virtual_clock),
         )
+    
+    def select_all_participants(self):
+        return self.client_manager.getAllClients()
 
     def get_model_similarity(self, id_i, id_j):
         if id_i == id_j:
@@ -444,6 +451,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         return self.model_manager.get_candidate_similarity(id_i, id_j)
 
     def client_completion_handler(self, results, client_id):
+        return
         """We may need to keep all updates from clients,
         if so, we need to append results to the cache"""
         # Format:
@@ -731,13 +739,16 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             select_num_participants=self.args.num_participants, overcommitment=self.args.overcommitment)
         (clientsToRun, round_stragglers, virtual_client_clock, round_duration, flatten_client_duration) = self.tictak_client_tasks(
             self.sampled_participants, self.args.num_participants)
+        
+        self.sampled_participants = self.select_all_participants()
+        clientsToRun = self.sampled_participants
 
         logging.info(f"Selected participants to run: {clientsToRun}")
         # Issue requests to the resource manager; Tasks ordered by the completion time
         self.resource_manager.register_tasks(clientsToRun)
-        self.tasks_round = [0 for _ in range(0, len(self.model))]
-        for client_id in clientsToRun:
-            self.tasks_round[self.mapped_models[client_id]] += 1
+        self.tasks_round = [len(clientsToRun)]
+        # for client_id in clientsToRun:
+        #     self.tasks_round[self.mapped_models[client_id]] += 1
 
         # Update executors and participants
         if self.experiment_mode == commons.SIMULATION_MODE:
@@ -759,7 +770,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         if self.round >= self.args.rounds: 
             self.broadcast_aggregator_events(commons.SHUT_DOWN)
-        elif self.round % self.args.eval_interval == 0 or self.round == 1:
+        elif self.round % self.args.eval_interval == 0:
             for i, model in enumerate(self.model):
                 model_path = os.path.join(logDir, 'model_'+str(i)+'.pth.tar')
                 with open(model_path, 'wb') as model_out:
@@ -912,7 +923,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             dictionary: Client training config.
 
         """
-        model_id = self.mapped_models[clientId]
+        model_id = 0
         conf = {
             'learning_rate': self.args.learning_rate,
             'model': None,  # none indicates we are using the global model
@@ -935,7 +946,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # NOTE: model = None then the executor will load the global model broadcasted in UPDATE_MODEL
         model = None
         if next_clientId != None:
-            model = self.mapped_models[next_clientId]
+            model = 0
             config = self.get_client_conf(next_clientId)
             train_config = {'client_id': next_clientId, 'task_config': config}
         return train_config, model
