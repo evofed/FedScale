@@ -1,6 +1,6 @@
 from fedscale.core.execution.executor import Executor
 from fedscale.utils.model_test_module import test_model
-from fedscale.core.fllibs import tokenizer, CTCLoss
+from fedscale.core.fllibs import tokenizer, CTCLoss, parser
 from fedscale.dataloaders.divide_data import select_dataset
 import pickle, time, torch, logging, gc
 
@@ -67,6 +67,7 @@ class EvoFed_executor(Executor):
         """
         evalStart = time.time()
         device = self.device
+        results = {}
         for model_id in range(len(self.model_num)):
             model = self.load_global_model(model_id)
 
@@ -87,7 +88,11 @@ class EvoFed_executor(Executor):
             logging.info("After aggregation round {} of model {}, CumulTime {}, eval_time {}, test_loss {}, test_accuracy {:.2f}%, test_5_accuracy {:.2f}% \n"
                             .format(self.round, model_id, round(time.time() - self.start_run_time, 4), round(time.time() - evalStart, 4), test_loss, acc*100., acc_5*100.))
 
+            results[model_id] = testResults
             gc.collect()
 
-        return testResults
+        return results
     
+if __name__ == '__main__':
+    executor = Executor(parser.args)
+    executor.run()

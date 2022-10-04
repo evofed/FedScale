@@ -1,10 +1,9 @@
-from select import select
 from fedscale.core.aggregation.aggregator import Aggregator
+from fedscale.core.fllibs import parser
 import fedscale.core.commons as commons
 import collections, pickle, sys, copy, logging
-import torch, math
+import torch, math, yaml
 import numpy as np
-from fedscale.dataloaders.rcnn.lib import model
 from model_manager import Model_Manager
 from ..model.init_model import init_model
 
@@ -202,7 +201,7 @@ class EvoFed_Aggregator(Aggregator):
             for client in clientsToRun:
                 assignment[client] = chosen_model_id
             tasks = []
-            for model_id in range(len(model)):
+            for model_id in range(len(self.model)):
                 if model_id == chosen_model_id:
                     tasks.append(len(clientsToRun))
                 else:
@@ -373,6 +372,12 @@ class EvoFed_Aggregator(Aggregator):
             'layer_names': self.model_manager.get_layers(self.model_assignment[str(clientId)])
         }
         return conf
+
+if __name__ == "__main__":
+    with open('../configs/server.yml') as f:
+        config = yaml.safe_load_all(f)
+    aggregator = EvoFed_Aggregator(parser.args, config)
+    aggregator.run()
     
 
 
