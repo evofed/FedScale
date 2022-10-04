@@ -1,11 +1,16 @@
+from importlib.util import module_for_loader
 import logging
+from operator import mod
+from pydoc import ModuleScanner
+from statistics import mode
 from typing import List
+from unicodedata import name
 import torch
 import networkx, onnx
 from onnx.helper import printable_graph
 from collections import defaultdict
 from fedscale.dataloaders.rcnn.lib import model
-from net2netlib import *
+from ..lib.net2netlib import *
 from copy import deepcopy
 import random
 import numpy as np
@@ -137,119 +142,130 @@ class Model_Manager():
         self.child_model = None
         self.widen_trajectary = []
         self.deepen_trajectary = []
-        self.dag = None
+        self.dags = [None]
         self.candidate_dags = []
-        self.name2id = {}
-        self.layername2id = {}
+        self.name2id = []
+        self.layername2id = []
         self.last_scaled_layer = set()
-        self.translate_latest_model()
+        self.translate_model(0)
     
-    def translate_latest_model(self):
-        self.dag, self.name2id, self.layername2id = translate_model(self.model[-1])
+    def translate_model(self, model_id: int = -1):
+        dag, name2id, layername2id = translate_model(self.model[model_id])
+        if model_id == len(self.model) or model_id + len(self.model) == -1:
+            self.dags.append(dag)
+            self.name2id.append(name2id)
+            self.layername2id.append(layername2id)
+        elif model_id < len(self.model) and model_id + len(self.model) >= 0:
+            self.dags[model_id] = dag
+            self.name2id[model_id] = name2id
+            self.layername2id[model_id] = layername2id
+        else:
+            raise Exception(f"Error when dealing with model {model_id} in model manager")
+        
                 
-    def get_all_nodes(self):
-        if self.dag == None:
-            self.translate_latest_model()
+    def get_all_nodes(self, model_id):
+        if model_id >= len(self.dags):
+            self.translate_model(model_id)
         nodes = []
-        for node_id in self.dag.nodes():
-            nodes.append(self.dag.nodes()[node_id]['attr'])
+        for node_id in self.dags[model_id].nodes():
+            nodes.append(self.dags[model_id].nodes()[node_id]['attr'])
         return nodes
 
-    def get_all_edges(self):
-        if self.dag == None:
-            self.translate_latest_model()
+    def get_all_edges(self, model_id):
+        if model_id >= len(self.dags):
+            self.translate_model(model_id)
         return self.dag.edges()
 
-    def get_convs(self):
+    def get_convs(self, model_id):
         convs = []
-        for node_id in self.dag.nodes():
-            if 'Conv' in self.dag.nodes()[node_id]['attr'].operator:
-                convs.append([node_id, self.dag.nodes()[node_id]['attr'].name])
+        for node_id in self.dags[model_id].nodes():
+            if 'Conv' in self.dags[model_id].nodes()[node_id]['attr'].operator:
+                convs.append([node_id, self.dags[model_id].nodes()[node_id]['attr'].name])
         return convs
 
-    def get_weighted_layers(self):
+    def get_weighted_layers(self, model_id):
         layers = []
-        for node_id in self.dag.nodes():
-            if self.dag.nodes()[node_id]['attr'].operator in weight_operator:
+        for node_id in self.dags[model_id].nodes():
+            if self.dags[model_id].nodes()[node_id]['attr'].operator in weight_operator:
                 layers.append([node_id, self.dag.nodes()[node_id]['attr'].name])
         return layers
 
-    def get_parents(self, query_node_id):
+    def get_parents(self, model_id, query_node_id):
         # current only support resnet, mobilenet_v2, alexnet, regnet_x_16gf, vgg19_bn
         # not support shufflenet
         # other nets are not tested yet
         l = []
-        for node_id in self.dag.predecessors(query_node_id):
-            node = self.dag.nodes()[node_id]['attr']
+        for node_id in self.dags[model_id].predecessors(query_node_id):
+            node = self.dags[model_id].nodes()[node_id]['attr']
             if node.operator == 'BatchNormalization':
                 l.append(node_id)
             if node.operator in weight_operator:
                 l.append(node_id)
             else:
-                l += self.get_parents(node_id)
+                l += self.get_parents(model_id, node_id)
         return l
 
-    def get_children(self, query_node_id):
+    def get_children(self, model_id, query_node_id):
         # current only support resnet, mobilenet_v2, alexnet, regnet_x_16gf, vgg19_bn
         # not support shufflenet
         # other nets are not tested yet
         l = []
-        for node_id in self.dag.successors(query_node_id):
-            node = self.dag.nodes()[node_id]['attr']
+        for node_id in self.dags[model_id].successors(query_node_id):
+            node = self.dags[model_id].nodes()[node_id]['attr']
             if node.operator == 'BatchNormalization':
                 l.append(node_id)
             if node.operator in weight_operator:
                 l.append(node_id)
             else:
-                l += self.get_children(node_id)
+                l += self.get_children(model_id, node_id)
         return l
 
-    def is_conflict(self, query_node_id):
+    def is_conflict(self, model_id, query_node_id):
         conflict_id = -1
-        for node_id in self.dag.successors(query_node_id):
-            node = self.dag.nodes()[node_id]['attr']
+        for node_id in self.dags[model_id].successors(query_node_id):
+            node = self.dags[model_id].nodes()[node_id]['attr']
             if node.operator in conflict_operator:
                 return node_id
             elif node.operator not in weight_operator:
-                temp_result = self.is_conflict(node_id)
+                temp_result = self.is_conflict(model_id, node_id)
                 if temp_result != -1:
                     return temp_result
         return conflict_id
     
-    def get_add_operand(self, add_node_id):
-        return self.get_parents(add_node_id)
+    def get_add_operand(self, model_id, add_node_id):
+        return self.get_parents(model_id, add_node_id)
     
-    def get_neighbour(self, query_node_id):
+    def get_neighbour(self, model_id, query_node_id):
         # current only support resnet, mobilenet_v2, alexnet, regnet_x_16gf, vgg19_bn
         # not support shufflenet
         # other nets are not tested yet
         l = []
-        conflict_node_id = self.is_conflict(query_node_id)
+        conflict_node_id = self.is_conflict(model_id, query_node_id)
         while conflict_node_id != -1:
-            l += self.get_operand(conflict_node_id)
-            conflict_node_id = self.is_conflict(conflict_node_id)
+            l += self.get_operand(model_id, conflict_node_id)
+            conflict_node_id = self.is_conflict(model_id, conflict_node_id)
         return l
 
-    def get_widen_instruction(self, query_node_id):
+    def get_widen_instruction(self, model_id, query_node_id):
         child_convs = set()
         parent_convs = set()
         child_lns = set()
         parent_lns = set()
         bns = set()
         
-        children = self.get_children(query_node_id)
-        neighbours = self.get_neighbour(query_node_id)
+        children = self.get_children(model_id, query_node_id)
+        neighbours = self.get_neighbour(model_id, query_node_id)
         for neighbor in neighbours:
-            node = self.dag.nodes()[neighbor]['attr']
+            node = self.dags[model_id].nodes()[neighbor]['attr']
             if node.operator == 'BatchNormalization':
                 bns.add(neighbor)
             elif node.operator == 'Gemm':
                 parent_lns.add(neighbor)
             else:
                 parent_convs.add(neighbor)
-            children += self.get_children(neighbor)
+            children += self.get_children(model_id, neighbor)
         for child in children:
-            node = self.dag.nodes()[child]['attr']
+            node = self.dags[model_id].nodes()[child]['attr']
             if node.operator == 'BatchNormalization':
                 bns.add(child)
             elif node.operator == 'Gemm':
@@ -258,68 +274,25 @@ class Model_Manager():
                 child_convs.add(child)
         return list(child_convs), list(parent_convs), list(bns), list(child_lns), list(parent_lns)
     
-    def get_deepen_instruction(self, query_node_id):
+    def get_deepen_instruction(self, model_id, query_node_id):
         out_channel, in_channel = None, None
 
         # get out_channels
-        child = self.get_children(query_node_id)[0]
-        child_node = self.dag.nodes()[child]['attr']
+        child = self.get_children(model_id, query_node_id)[0]
+        child_node = self.dags[model_id].nodes()[child]['attr']
         if child_node.operator == 'BatchNormalization':
-            bn = get_model_layer(self.model[-1], child_node.name)
+            bn = get_model_layer(self.model[model_id], child_node.name)
             out_channel = bn.num_features
         else:
-            conv = get_model_layer(self.model[-1], child_node.name)
+            conv = get_model_layer(self.model[model_id], child_node.name)
             out_channel = conv.in_channels
         
         # get out_channels
-        parent_node = self.dag.nodes()[parent_node]['attr']
-        conv = get_model_layer(self.model[-1], parent_node.name)
+        parent_node = self.dags[model_id].nodes()[parent_node]['attr']
+        conv = get_model_layer(self.model[model_id], parent_node.name)
         in_channel = conv.out_channels
 
         return in_channel, out_channel
-
-    def widen_layer(self, candidate_id, node_id):
-        node_name = self.dag.nodes()[node_id]['attr'].name
-        children, parents, bns, ln_children, ln_parents = self.get_widen_instruction(node_id)
-        node = self.dag.nodes()[node_id]['attr']
-        if len(children) == 0 and len(ln_children) == 0:
-            print(f'fail to widen {node.name} as it is the last layer')
-            return []
-        if node.operator == 'Gemm':
-            ln_parents.append(node_id)
-        elif node_id not in parents:
-            parents.append(node_id)
-        for child in children:
-            node_name = self.dag.nodes()[child]['attr'].name
-            self.candidate_models[candidate_id] = widen_child_conv(
-                self.candidate_models[candidate_id], node_name)
-        for parent in parents:
-            node_name = self.dag.nodes()[parent]['attr'].name
-            self.candidate_models[candidate_id] = widen_parent_conv(
-                self.candidate_models[candidate_id], node_name)
-        for bn in bns:
-            node_name = self.dag.nodes()[bn]['attr'].name
-            self.candidate_models[candidate_id] = widen_bn(
-                self.candidate_models[candidate_id], node_name)
-        for ln_child in ln_children:
-            node_name = self.dag.nodes()[ln_child]['attr'].name
-            self.candidate_models[candidate_id] = widen_child_ln(
-                self.candidate_models[candidate_id], node_name
-            )
-        for ln_parent in ln_parents:
-            node_name = self.dag.nodes()[ln_child]['attr'].name
-            node_name = self.dag.nodes()[ln_parent]['attr'].name
-            self.candidate_models[candidate_id] = widen_parent_ln(
-                self.candidate_models[candidate_id], node_name
-            )
-        return parents
-
-    def deepen_layer(self, candidate_id, node_id):
-        node = self.dag.nodes()[node_id]['attr']
-        if node.operator == 'Conv':
-            self.candidate_models[candidate_id] = deepen(
-                self.candidate_models[candidate_id], node.name
-            )
 
     def record_trajectary(self, model_id, widened_layers, deepened_layers):
         layers = self.get_weighted_layers()
@@ -346,10 +319,10 @@ class Model_Manager():
             conv_id = nodeid2convid(node_id)
             self.deepen_trajectary[model_id][conv_id] = 1
 
-    def widen_layer(self, node_id):
-        node_name = self.dag.nodes()[node_id]['attr'].name
-        children, parents, bns, ln_children, ln_parents = self.get_widen_instruction(node_id)
-        node = self.dag.nodes()[node_id]['attr']
+    def widen_layer(self, model_id, node_id):
+        node_name = self.dags[model_id].nodes()[node_id]['attr'].name
+        children, parents, bns, ln_children, ln_parents = self.get_widen_instruction(model_id, node_id)
+        node = self.dags[model_id].nodes()[node_id]['attr']
         if len(children) == 0 and len(ln_children) == 0:
             print(f'fail to widen {node.name} as it is the last layer')
             return []
@@ -358,35 +331,35 @@ class Model_Manager():
         elif node_id not in parents:
             parents.append(node_id)
         for child in children:
-            node_name = self.dag.nodes()[child]['attr'].name
-            self.model[-1] = widen_child_conv(
-                self.model[-1], node_name)
+            node_name = self.dags[model_id].nodes()[child]['attr'].name
+            self.model[model_id] = widen_child_conv(
+                self.model[model_id], node_name)
         for parent in parents:
-            node_name = self.dag.nodes()[parent]['attr'].name
-            self.model[-1] = widen_parent_conv(
-                self.model[-1], node_name)
+            node_name = self.dags[model_id].nodes()[parent]['attr'].name
+            self.model[model_id] = widen_parent_conv(
+                self.model[model_id], node_name)
         for bn in bns:
-            node_name = self.dag.nodes()[bn]['attr'].name
-            self.model[-1] = widen_bn(
-                self.model[-1], node_name)
+            node_name = self.dags[model_id].nodes()[bn]['attr'].name
+            self.model[model_id] = widen_bn(
+                self.model[model_id], node_name)
         for ln_child in ln_children:
-            node_name = self.dag.nodes()[ln_child]['attr'].name
-            self.model[-1] = widen_child_ln(
-                self.model[-1], node_name
+            node_name = self.dags[model_id].nodes()[ln_child]['attr'].name
+            self.model[model_id] = widen_child_ln(
+                self.model[model_id], node_name
             )
         for ln_parent in ln_parents:
-            node_name = self.dag.nodes()[ln_child]['attr'].name
-            node_name = self.dag.nodes()[ln_parent]['attr'].name
-            self.model[-1] = widen_parent_ln(
-                self.model[-1], node_name
+            node_name = self.dags[model_id].nodes()[ln_child]['attr'].name
+            node_name = self.dags[model_id].nodes()[ln_parent]['attr'].name
+            self.model[model_id] = widen_parent_ln(
+                self.model[model_id], node_name
             )
         return parents
 
-    def deepen_layer(self, node_id):
-        node = self.dag.nodes()[node_id]['attr']
+    def deepen_layer(self, model_id, node_id):
+        node = self.dags[model_id].nodes()[node_id]['attr']
         if node.operator == 'Conv':
-            self.model[-1] = deepen(
-                self.model[-1], node.name
+            self.model[model_id] = deepen(
+                self.model[model_id], node.name
             )
     
     def efficient_model_scale(self, layers: List[str]):
@@ -403,11 +376,21 @@ class Model_Manager():
         for layer in widen_layers:
             logging.info(f'widenning layer {layer}')
             node_id = self.layername2id[layer]
-            self.widen_layer(node_id)
+            self.widen_layer(-1, node_id)
         for layer in deepen_layers:
             logging.info(f"deepening layer {layer}")
             node_id = self.layername2id[layer]
-            self.deepen_layer(node_id)
+            self.deepen_layer(-1, node_id)
+        self.translate_model(-1)
+        
+    def get_layers(self, model_id):
+        if model_id >= len(self.dags):
+            self.translate_model(model_id)
+        layers = []
+        for node_id in self.dags[model_id].nodes():
+            if self.dags[model_id].nodes()[node_id]['attr'].operator in weight_operator:
+                layers.append([node_id, self.dags[model_id].nodes()[node_id]['attr'].name])
+        return layers
     
     def get_candidate_distance(self, candidate_i, candidate_j):
         """

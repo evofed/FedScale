@@ -2,7 +2,6 @@ from fedscale.core.execution.executor import Executor
 from fedscale.utils.model_test_module import test_model
 from fedscale.core.fllibs import tokenizer, CTCLoss
 from fedscale.dataloaders.divide_data import select_dataset
-import fedscale.core.commons as commons
 import pickle, time, torch, logging, gc
 
 class EvoFed_executor(Executor):

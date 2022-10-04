@@ -369,7 +369,8 @@ class EvoFed_Aggregator(Aggregator):
     def get_client_conf(self, clientId):
         conf = {
             'learning_rate': self.args.learning_rate,
-            'model_id': self.model_assignment[str(clientId)]
+            'model_id': self.model_assignment[str(clientId)],
+            'layer_names': self.model_manager.get_layers(self.model_assignment[str(clientId)])
         }
         return conf
     
