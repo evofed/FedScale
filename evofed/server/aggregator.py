@@ -1,8 +1,9 @@
 from fedscale.core.aggregation.aggregator import Aggregator
 from fedscale.core.fllibs import parser
+from fedscale.core.logger.aggragation import logDir
 import fedscale.core.commons as commons
 import collections, pickle, sys, copy, logging
-import torch, math, yaml
+import torch, math, yaml, os
 import numpy as np
 from model_manager import Model_Manager
 from ..model.init_model import init_model
@@ -243,6 +244,8 @@ class EvoFed_Aggregator(Aggregator):
         logging.info(f'selected layers {selected_layers} to transform')
         self.model_manager.efficient_model_scale(selected_layers)
         self.model.append(self.model_manager.model[-1])
+        self.model_weights.append(self.model_manager.model[-1].state_dict())
+        self.latest_model_layer_rankings = []
 
     def round_gradient_handler(self):
         flattened_gradient = []
@@ -250,6 +253,7 @@ class EvoFed_Aggregator(Aggregator):
             flattened_gradient.append([layer, self.layer_gradients[-1][layer][-1]])
         flattened_gradient = sorted(flattened_gradient, key=lambda l: l[1])
         self.latest_model_layer_rankings.append([l[0] for l in flattened_gradient])
+        logging.info(f'current layer ranking: {flattened_gradient}')
             
     def round_completion_handler(self):
         self.global_virtual_clock += self.round_duration
@@ -312,10 +316,10 @@ class EvoFed_Aggregator(Aggregator):
         self.virtual_client_clock = virtual_client_clock
         self.flatten_client_duration = np.array(flatten_client_duration)
         self.round_duration = round_duration
-        self.model_in_update = 0
+        self.model_in_update = [0 for _ in self.model]
         self.test_result_accumulator = collections.defaultdict(list)
         self.stats_util_accumulator = []
-        self.loss_accumulator = {}
+        self.loss_accumulator = collections.defaultdict(list)
         self.update_default_task_config()
 
         if self.round >= self.args.rounds:
@@ -327,6 +331,13 @@ class EvoFed_Aggregator(Aggregator):
             self.broadcast_aggregator_events(commons.UPDATE_MODEL)
             self.broadcast_aggregator_events(commons.START_ROUND)
 
+    def save_models(self):
+        for i, model in enumerate(self.model):
+            model_path = os.path.join(logDir, 'model_'+str(i)+'.pth.tar')
+            with open(model_path, 'wb') as f:
+                pickle.dump(model, f)
+
+
     def testing_completion_handler(self, client_id, results):
         results = results['results'] # results['results'] is a dict {model_id: results}
         
@@ -335,6 +346,8 @@ class EvoFed_Aggregator(Aggregator):
 
         if len(self.test_result_accumulator) == len(self.executors):
             self.aggregate_test_result()
+        
+        self.save_models()
         
         self.broadcast_events_queue(commons.START_ROUND)
 
