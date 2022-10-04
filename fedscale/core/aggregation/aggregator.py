@@ -260,7 +260,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         """
         self.registered_executor_info.add(executorId)
-        logging.info(f"Received executor {executorId} information, {len(self.registered_executor_info)}/{len(self.executors)}")
 
         # In this simulation, we run data split on each worker, so collecting info from one executor is enough
         # Waiting for data information from executors, or timeout
@@ -769,7 +768,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         executor_id = request.executor_id
         executor_info = self.deserialize_response(request.executor_info)
         if executor_id not in self.individual_client_events:
-            # logging.info(f"Detect new client: {executor_id}, executor info: {executor_info}")
             self.individual_client_events[executor_id] = collections.deque()
         else:
             logging.info(f"Previous client: {executor_id} resumes connecting")
@@ -801,7 +799,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             current_event = commons.DUMMY_EVENT
             response_data = response_msg = commons.DUMMY_RESPONSE
         else:
-            logging.info(f"====event queue {executor_id}, {self.individual_client_events[executor_id]}")
             current_event = self.individual_client_events[executor_id].popleft()
             if current_event == commons.CLIENT_TRAIN:
                 response_msg, response_data = self.create_client_task(
@@ -842,8 +839,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         executor_id, client_id, event = request.executor_id, request.client_id, request.event
         execution_status, execution_msg = request.status, request.msg
         meta_result, data_result = request.meta_result, request.data_result
-
-        logging.info(f'got the execution completion infomation with event {event} from client {client_id} of executor {executor_id}')
 
         if event == commons.CLIENT_TRAIN:
             # Training results may be uploaded in CLIENT_EXECUTE_RESULT request later,
