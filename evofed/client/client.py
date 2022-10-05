@@ -1,8 +1,8 @@
 from fedscale.core.execution.client import Client
-from fedscale.core.fllibs import mask_tokens, tokenizer
+from fedscale.core.fllibs import tokenizer
 import logging, math, torch
 from torch.autograd import Variable
-from ..lib.net2netlib import get_model_layer_grad, get_model_layer_weight
+from evofed.lib.net2netlib import get_model_layer_grad, get_model_layer_weight
 
 
 class EvoFed_Client(Client):
@@ -74,6 +74,7 @@ class EvoFed_Client(Client):
 
         for data_pair in client_data:
             if conf.task == 'nlp':
+                from fedscale.dataloaders.nlp import mask_tokens
                 (data, _) = data_pair
                 data, target = mask_tokens(
                     data, tokenizer, conf, device=conf.device)
@@ -167,8 +168,7 @@ class EvoFed_Client(Client):
             optimizer.step()
 
             # ========= Weight handler ========================
-            self.optimizer.update_client_weight(
-                conf, model, self.global_model if self.global_model is not None else None)
+            # disabled
 
             self.completed_steps += 1
 

@@ -1,5 +1,5 @@
 import fedscale.core.fllibs as fllibs
-from nasbench import get_cell_based_tiny_net
+from .nasbench import get_cell_based_tiny_net
 
 def init_model(task, model, dataset):
     if model == 'nasbench201':

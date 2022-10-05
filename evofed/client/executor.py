@@ -1,10 +1,11 @@
 from fedscale.core.execution.executor import Executor
 from fedscale.utils.model_test_module import test_model
-from fedscale.core.fllibs import tokenizer, CTCLoss, parser
+from fedscale.core.fllibs import tokenizer, parser
 from fedscale.dataloaders.divide_data import select_dataset
+from evofed.client.client import EvoFed_Client
 import pickle, time, torch, logging, gc
 
-class EvoFed_executor(Executor):
+class EvoFed_Executor(Executor):
     def __init__(self, args):
         super().__init__(args)
         self.model_num = 0
@@ -27,6 +28,9 @@ class EvoFed_executor(Executor):
         with open(f"{self.temp_model_path}_{model_id}", 'rb') as model_in:
             model = pickle.load(model_in)
         return model
+
+    def get_client_trainer(self, conf):
+        return EvoFed_Client(conf)
     
     def training_handler(self, clientId, conf, model=None):
         """Train model given client id
@@ -53,6 +57,8 @@ class EvoFed_executor(Executor):
         train_res = client.train(
             client_data=client_data, model=client_model, conf=conf)
 
+        train_res['model_id'] = conf.model_id
+
         return train_res
 
     def testing_handler(self, args, config=None):
@@ -68,7 +74,7 @@ class EvoFed_executor(Executor):
         evalStart = time.time()
         device = self.device
         results = {}
-        for model_id in range(len(self.model_num)):
+        for model_id in range(self.model_num):
             model = self.load_global_model(model_id)
 
             data_loader = select_dataset(self.this_rank, self.testing_sets,
@@ -77,6 +83,7 @@ class EvoFed_executor(Executor):
                                             )
 
             if self.task == 'voice':
+                from torch_baidu_ctc import CTCLoss
                 criterion = CTCLoss(reduction='mean').to(device=device)
             else:
                 criterion = torch.nn.CrossEntropyLoss().to(device=device)
@@ -94,5 +101,5 @@ class EvoFed_executor(Executor):
         return results
     
 if __name__ == '__main__':
-    executor = Executor(parser.args)
+    executor = EvoFed_Executor(parser.args)
     executor.run()

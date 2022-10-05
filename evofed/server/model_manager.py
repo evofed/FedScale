@@ -1,18 +1,11 @@
-from importlib.util import module_for_loader
 import logging
-from operator import mod
-from pydoc import ModuleScanner
-from statistics import mode
 from typing import List
-from unicodedata import name
 import torch
 import networkx, onnx
 from onnx.helper import printable_graph
 from collections import defaultdict
-from fedscale.dataloaders.rcnn.lib import model
-from ..lib.net2netlib import *
+from evofed.lib.net2netlib import *
 from copy import deepcopy
-import random
 import numpy as np
 import math
 
@@ -142,7 +135,7 @@ class Model_Manager():
         self.child_model = None
         self.widen_trajectary = []
         self.deepen_trajectary = []
-        self.dags = [None]
+        self.dags = []
         self.candidate_dags = []
         self.name2id = []
         self.layername2id = []
@@ -151,11 +144,11 @@ class Model_Manager():
     
     def translate_model(self, model_id: int = -1):
         dag, name2id, layername2id = translate_model(self.model[model_id])
-        if model_id == len(self.model) or model_id + len(self.model) == -1:
+        if model_id == len(self.dags) or model_id + len(self.dags) == -1:
             self.dags.append(dag)
             self.name2id.append(name2id)
             self.layername2id.append(layername2id)
-        elif model_id < len(self.model) and model_id + len(self.model) >= 0:
+        elif model_id < len(self.dags) and model_id + len(self.dags) >= 0:
             self.dags[model_id] = dag
             self.name2id[model_id] = name2id
             self.layername2id[model_id] = layername2id
