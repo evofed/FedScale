@@ -1,5 +1,5 @@
-model_source: fedscale # fedscale, load, or nasbench201
-model_path: model_0
+model_source: load # fedscale, load, or nasbench201
+model_path: model_1,model_2,model_3
 aggregate_mode: normal # normal or soft
 transform_criterion: converge
 converge_M: 100

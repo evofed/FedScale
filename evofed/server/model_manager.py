@@ -129,10 +129,9 @@ def translate_model(model):
 
 
 class Model_Manager():
-    def __init__(self, torch_model, seed=2333) -> None:
+    def __init__(self, seed=2333) -> None:
         self.seed = seed
-        self.model = [torch_model]
-        self.child_model = None
+        self.model = []
         self.widen_trajectary = []
         self.deepen_trajectary = []
         self.dags = []
@@ -140,8 +139,12 @@ class Model_Manager():
         self.name2id = []
         self.layername2id = []
         self.last_scaled_layer = set()
-        self.translate_model(0)
     
+    def load_models(self, models) -> None:
+        for i, model in enumerate(models):
+            self.model.append(model)
+            self.translate_model(i) 
+               
     def translate_model(self, model_id: int = -1):
         dag, name2id, layername2id = translate_model(self.model[model_id])
         if model_id == len(self.dags) or model_id + len(self.dags) == -1:

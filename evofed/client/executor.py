@@ -57,6 +57,8 @@ class EvoFed_Executor(Executor):
         train_res = client.train(
             client_data=client_data, model=client_model, conf=conf)
 
+        logging.info(f'training of model {conf.model_id} at client {conf.clientId} completed in executor {self.this_rank}')
+
         train_res['model_id'] = conf.model_id
 
         return train_res

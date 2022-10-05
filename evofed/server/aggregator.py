@@ -42,19 +42,27 @@ class EvoFed_Aggregator(Aggregator):
 
     def init_model(self):
         if self.server_config['model_source'] == 'fedscale':
-            model = init_model(
-                self.args.task, self.args.model, self.args.data_set)
+            models = [init_model(
+                self.args.task, self.args.model, self.args.data_set)]
         elif self.server_config['model_source'] == 'load':
-            with open(f"../{self.server_config['model_path']}", 'rb') as f:
-                model = pickle.load(f)
+            models = []
+            model_paths = self.server_config['model_path'].split(
+                ',') if ',' in self.server_config['model_path'] else [self.server_config['model_path']]
+            for model_path in model_paths:
+                with open(f"FedScale/checkpoints/{model_path}.pth.tar", 'rb') as f:
+                    model = pickle.load(f)
+                    models.append(model)
+            logging.info(f"loading {len(models)} models from server: {model_paths}")
         else:
-            model = init_model(
-                self.args.task, self.server_config['model_source'], self.args.data_set)
+            models = [init_model(
+                self.args.task, self.server_config['model_source'], self.args.data_set)]
 
-        self.model = [model]
-        self.model_weights = [model.state_dict()]
-        self.model_manager = Model_Manager(
-            model, int(self.server_config['seed']))
+        self.model = models
+        self.model_weights = [model.state_dict() for model in self.model]
+        self.model_manager = Model_Manager(int(self.server_config['seed']))
+        self.last_gradient_weights = [[] for _ in self.model]
+        self.model_manager.load_models(models)
+        self.layer_gradients = [collections.defaultdict(list) for _ in self.model]
 
     def tictak_client_tasks(self, sampled_clients, num_clients_to_collect):
         # NOTE: We try to remove dummy events as much as possible in simulations,
@@ -103,7 +111,7 @@ class EvoFed_Aggregator(Aggregator):
         self.init_model()
         self.save_last_param()
         self.model_update_size = [sys.getsizeof(
-            pickle.dumps(self.model))/1024.0*8.]  # kbits
+            pickle.dumps(model))/1024.0*8. for model in self.model]  # kbits
         self.client_profiles = self.load_client_profile(
             file_path=self.args.device_conf_file)
 
@@ -176,7 +184,7 @@ class EvoFed_Aggregator(Aggregator):
                 self.model_weights[model_id][p].data = param_weight
             else:
                 self.model_weights[model_id][p].data += param_weight
-        
+
         if self.model_in_update[model_id] == self.tasks_round[model_id]:
             for p in self.model_weights[model_id]:
                 d_type = self.model_weights[model_id][p].data.dtype
@@ -197,7 +205,8 @@ class EvoFed_Aggregator(Aggregator):
     def round_weight_handler(self):
         if self.round > 1:
             for model_id, _ in enumerate(self.model):
-                self.model[model_id].load_state_dict(self.model_weights[model_id])
+                self.model[model_id].load_state_dict(
+                    self.model_weights[model_id])
 
     def model_assign(self, clientsToRun):
         if self.server_config['model_assignment'] == 'naive':
@@ -207,8 +216,8 @@ class EvoFed_Aggregator(Aggregator):
             partition = len(clientsToRun) // num_models
             tasks = []
             for i, client in enumerate(clientsToRun):
-                assignment[str(client)] = i // partition
-                if i % partition == 0:
+                assignment[str(client)] = min(i // partition, num_models-1)
+                if i % partition == 0 and len(tasks) < num_models:
                     tasks.append(1)
                 else:
                     tasks[-1] += 1
@@ -237,10 +246,12 @@ class EvoFed_Aggregator(Aggregator):
                     slope_avg += abs(loss[-1-i] - loss[-1-i-M]) / M
                 slope_avg = slope_avg / N
                 if slope_avg < float(self.server_config['converge_C']):
-                    logging.info(f"average slope {slope_avg} < {float(self.server_config['converge_C'])}, ready to transform")
+                    logging.info(
+                        f"average slope {slope_avg} < {float(self.server_config['converge_C'])}, ready to transform")
                     return True
                 else:
-                    logging.info(f"average slope {slope_avg} >= {float(self.server_config['converge_C'])}, cannot transform")
+                    logging.info(
+                        f"average slope {slope_avg} >= {float(self.server_config['converge_C'])}, cannot transform")
                     return False
             else:
                 return False
@@ -266,6 +277,8 @@ class EvoFed_Aggregator(Aggregator):
         self.model.append(self.model_manager.model[-1])
         self.model_weights.append(self.model_manager.model[-1].state_dict())
         self.latest_model_layer_rankings = []
+        self.last_gradient_weights.append([])
+        self.layer_gradients.append(collections.defaultdict(list))
 
     def round_gradient_handler(self):
         flattened_gradient = []
@@ -356,7 +369,8 @@ class EvoFed_Aggregator(Aggregator):
 
     def save_models(self):
         for i, model in enumerate(self.model):
-            model_path = os.path.join(logger.logDir, 'model_'+str(i)+'.pth.tar')
+            model_path = os.path.join(
+                logger.logDir, 'model_'+str(i)+'.pth.tar')
             with open(model_path, 'wb') as f:
                 pickle.dump(model, f)
 
@@ -372,7 +386,6 @@ class EvoFed_Aggregator(Aggregator):
             self.broadcast_events_queue.append(commons.START_ROUND)
 
             self.save_models()
-
 
     def aggregate_test_result(self):
         for model_id in self.test_result_accumulator:
@@ -403,7 +416,7 @@ class EvoFed_Aggregator(Aggregator):
                 loss = accumulator['test_loss'] / accumulator['test_len']
             test_len = accumulator['test_len']
             logging.info("FL Testing of model {} in round {}, virtual_clock {}, top_1: {} %, top_5: {} %, test loss: {:.4f}, test len: {}"
-                        .format(model_id, self.round, self.global_virtual_clock, top_1, top_5, loss, test_len))
+                         .format(model_id, self.round, self.global_virtual_clock, top_1, top_5, loss, test_len))
 
     def get_client_conf(self, clientId):
         conf = {
