@@ -34,3 +34,6 @@ common_voice
 puffer  
 landmark  
 coqa
+checkpoints/*
+*.run
+*.sh
