@@ -15,6 +15,7 @@ import time
 import numpy as np
 from model_manager import Model_Manager
 from evofed.model.init_model import init_model
+from model_manager import shape_match
 
 
 class EvoFed_Aggregator(Aggregator):
@@ -31,6 +32,8 @@ class EvoFed_Aggregator(Aggregator):
         self.loss_accumulator = collections.defaultdict(list)
 
         # ======== evofed specific attributes ========
+        self.model_weights_name = []
+        self.model_weights_weights = []
         self.latest_model_layer_rankings = []
         self.layer_gradients = [collections.defaultdict(list)]
         self.global_training_loss = collections.defaultdict(list)
@@ -59,6 +62,9 @@ class EvoFed_Aggregator(Aggregator):
 
         self.model = models
         self.model_weights = [model.state_dict() for model in self.model]
+        for model_weight in self.model_weights:
+            self.model_weights_name.append([param_name for param_name in model_weight])
+            self.model_weights_weights.append(collections.defaultdict(list))
         self.model_manager = Model_Manager(int(self.server_config['seed']))
         self.last_gradient_weights = [[] for _ in self.model]
         self.model_manager.load_models(models)
@@ -192,8 +198,38 @@ class EvoFed_Aggregator(Aggregator):
                 self.model_weights[model_id][p].data = (
                     self.model_weights[model_id][p]/float(self.tasks_round[model_id])).to(dtype=d_type)
 
+    def get_soft_agg_weight(self, trained_model_id, aggregated_model_id):
+        return 1.0
+    
     def soft_aggregate_client_weights(self, results):
-        pass
+        trained_model_id = results['model_id']
+        for model_id in range(len(self.model)):
+            for p in results['update_weight']:
+                param_weight = results['update_weight'][p]
+                if isinstance(param_weight, list):
+                    param_weight = np.asarray(param_weight, dtype=np.float32)
+                param_weight = torch.from_numpy(
+                    param_weight
+                ).to(device=self.device)
+                if p in self.model_weights_name[model_id]:
+                    weight = self.get_soft_agg_weight(trained_model_id, model_id)
+                    self.model_weights_weights[model_id][p].append(weight)
+                    transformed_weight = shape_match(param_weight, self.model_weights_name[model_id][p].data)
+                    if self.model_in_update[model_id] == 1:
+                        self.model_weights[model_id][p].data = weight * transformed_weight
+                    else:
+                        self.model_weights[model_id][p].data += weight * transformed_weight
+            
+            if sum(self.model_in_update) == sum(self.tasks_round):
+                for p in self.model_weights[model_id]:
+                    d_type = self.model_weights[model_id][p].data.dtype
+                    self.model_weights[model_id][p].data = (
+                        self.model_weights[model_id][p] / float(
+                            sum(self.model_weights_weights[model_id][p])
+                        )
+                    ).to(dtype=d_type)
+        
+
 
     def save_last_param(self):
         for model_id, model in enumerate(self.model):
@@ -276,6 +312,8 @@ class EvoFed_Aggregator(Aggregator):
         self.model_manager.efficient_model_scale(selected_layers)
         self.model.append(self.model_manager.model[-1])
         self.model_weights.append(self.model_manager.model[-1].state_dict())
+        self.model_weights_name.append([param_name for param_name in self.model_weights[-1]])
+        self.model_weights_weights.append(collections.defaultdict(list))
         self.latest_model_layer_rankings = []
         self.last_gradient_weights.append([])
         self.layer_gradients.append(collections.defaultdict(list))

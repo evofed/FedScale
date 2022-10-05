@@ -126,7 +126,35 @@ def translate_model(model):
     
     return dag, name2id, layername2id
 
+def tensor_crop(weight: torch.Tensor, target_shape: torch.Tensor):
+    ts = target_shape.tolist()
+    ts = [':'+str(tss) for tss in ts]
+    ts = ",".join(ts)
+    return eval(f'deepcopy(weight[{ts}])')
 
+def shape_match(trained_weight: torch.Tensor, weight: torch.Tensor) -> list:
+    assert len(trained_weight.shape) == len(weight.shape)
+    ts = weight.shape
+    trained_is_larger = False
+    trained_is_smaller = False
+    for dim_t, dim in zip(trained_weight.shape, weight.shape):
+        if dim_t > dim:
+            trained_is_larger = True
+        elif dim_t < dim:
+            trained_is_smaller = True
+    if trained_is_larger and trained_is_smaller:
+        raise Exception(f'error in doing transformation, get weight {trained_weight.shape} and {weight}')
+    elif trained_is_larger:
+        new_weight = tensor_crop(trained_weight, ts)
+    elif trained_is_smaller:
+        ratios = []
+        for dim_t, dim in zip(trained_weight.shape, weight.shape):
+            ratios.append(math.ceil(dim / dim_t))
+        new_weight = deepcopy(trained_weight.repeat(ratios))
+        new_weight = tensor_crop(new_weight, ts)
+    else:
+        new_weight = deepcopy(trained_weight)
+    return new_weight
 
 class Model_Manager():
     def __init__(self, seed=2333) -> None:
