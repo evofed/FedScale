@@ -16,6 +16,7 @@ import numpy as np
 from model_manager import Model_Manager
 from evofed.model.init_model import init_model
 from model_manager import shape_match
+from evofed.server.client_manager import EvoFed_ClientManager
 
 
 class EvoFed_Aggregator(Aggregator):
@@ -42,6 +43,12 @@ class EvoFed_Aggregator(Aggregator):
         self.local_training_time = collections.defaultdict(list)
         self.server_config = conf
         self.flatten_client_duration = []
+        self.saved_id = 0
+
+    
+    def init_client_manager(self, args):
+        client_manager = EvoFed_ClientManager(args.sample_mode, args=args)
+        return client_manager
 
     def init_model(self):
         if self.server_config['model_source'] == 'fedscale':
@@ -199,7 +206,12 @@ class EvoFed_Aggregator(Aggregator):
                     self.model_weights[model_id][p]/float(self.tasks_round[model_id])).to(dtype=d_type)
 
     def get_soft_agg_weight(self, trained_model_id, aggregated_model_id):
-        return 1.0
+        if trained_model_id == aggregated_model_id:
+            return 1.0
+        elif trained_model_id > aggregated_model_id:
+            return 0.0
+        else:
+            return 0.1 / (self.round - 100 * int(aggregated_model_id))
     
     def soft_aggregate_client_weights(self, results):
         trained_model_id = results['model_id']
@@ -212,15 +224,19 @@ class EvoFed_Aggregator(Aggregator):
                     param_weight
                 ).to(device=self.device)
                 if p in self.model_weights_name[model_id]:
+                    d_type = self.model_weights[model_id][p].data.dtype
                     weight = self.get_soft_agg_weight(trained_model_id, model_id)
+                    if d_type == torch.int64 and trained_model_id != model_id:
+                        continue
                     self.model_weights_weights[model_id][p].append(weight)
-                    transformed_weight = shape_match(param_weight, self.model_weights_name[model_id][p].data)
-                    if self.model_in_update[model_id] == 1:
+                    transformed_weight = shape_match(param_weight, self.model_weights[model_id][p].data)
+                    if sum(self.model_in_update[model_id]) == 1:
                         self.model_weights[model_id][p].data = weight * transformed_weight
                     else:
                         self.model_weights[model_id][p].data += weight * transformed_weight
             
             if sum(self.model_in_update) == sum(self.tasks_round):
+                # logging.info(f"soft aggregation history of model {model_id}: {self.model_weights_weights[model_id]}")
                 for p in self.model_weights[model_id]:
                     d_type = self.model_weights[model_id][p].data.dtype
                     self.model_weights[model_id][p].data = (
@@ -228,6 +244,7 @@ class EvoFed_Aggregator(Aggregator):
                             sum(self.model_weights_weights[model_id][p])
                         )
                     ).to(dtype=d_type)
+                    self.model_weights_weights[model_id][p] = []
         
 
 
@@ -273,7 +290,7 @@ class EvoFed_Aggregator(Aggregator):
 
     def transform_criterion(self) -> bool:
         if self.server_config['transform_criterion'] == 'converge':
-            loss = self.global_training_loss[-1]
+            loss = self.global_training_loss[len(self.model)-1]
             M = int(self.server_config['converge_M'])
             N = int(self.server_config['converge_N'])
             if len(loss) >= M + N:
@@ -293,9 +310,31 @@ class EvoFed_Aggregator(Aggregator):
                 return False
         else:
             return False
+    
+    def finish_training_criterion(self) -> bool:
+        if len(self.model) == 1:
+            return False
+        loss = self.global_training_loss[0]
+        M = int(self.server_config['converge_M'])
+        N = int(self.server_config['converge_N'])
+        if len(loss) >= M + N:
+            slope_avg = .0
+            for i in range(N):
+                slope_avg += abs(loss[-1-i] - loss[-1-i-M]) / M
+            slope_avg = slope_avg / N
+            if slope_avg < float(self.server_config['drop_C']):
+                logging.info(
+                    f"average slope {slope_avg} < {float(self.server_config['drop_C'])}, ready to save and finish")
+                return True
+            else:
+                logging.info(
+                    f"average slope {slope_avg} >= {float(self.server_config['drop_C'])}, keep training")
+                return False
+        else:
+            return False
 
     def select_layers(self) -> list:
-        most_active_layer = self.latest_model_layer_rankings[-1]
+        most_active_layer = self.latest_model_layer_rankings[-1][-1]
         max_gradient = self.layer_gradients[-1][most_active_layer][-1]
         gradient_threshold = max_gradient * \
             float(self.server_config['layer_selection_alpha'])
@@ -317,6 +356,20 @@ class EvoFed_Aggregator(Aggregator):
         self.latest_model_layer_rankings = []
         self.last_gradient_weights.append([])
         self.layer_gradients.append(collections.defaultdict(list))
+
+    def drop_oldest_model(self):
+        logging.info("saving trained model 0")
+        model_path = os.path.join(logger.logDir, 'model_'+str(self.saved_id)+'_trained.pth.tar')
+        with open(model_path, 'wb') as f:
+            pickle.dump(self.model[self.saved_id], f)
+        self.saved_id += 1
+        self.model.pop(0)
+        self.model_weights.pop(0)
+        self.model_weights_name.pop(0)
+        self.model_weights_weights.pop(0)
+        self.last_gradient_weights.pop(0)
+        self.layer_gradients.pop(0)
+        self.model_manager.drop_parent_model()
 
     def round_gradient_handler(self):
         flattened_gradient = []
@@ -363,6 +416,10 @@ class EvoFed_Aggregator(Aggregator):
         # decide if need to transform
         if self.transform_criterion():
             self.transform_latest_model()
+
+        # decide if need to drop the oldest
+        if self.finish_training_criterion():
+            self.drop_oldest_model()
 
         # disable tensorboard
         # if len(self.loss_accumulator):
@@ -494,6 +551,8 @@ class EvoFed_Aggregator(Aggregator):
                         self.deserialize_response(data))
                     if len(self.stats_util_accumulator) == sum(self.tasks_round):
                         self.round_completion_handler()
+                    # else:
+                    #     logging.info(f'training progress: {len(self.stats_util_accumulator)}/{sum(self.tasks_round)}')
 
                 elif current_event == commons.MODEL_TEST:
                     self.testing_completion_handler(

@@ -127,7 +127,7 @@ def translate_model(model):
     return dag, name2id, layername2id
 
 def tensor_crop(weight: torch.Tensor, target_shape: torch.Tensor):
-    ts = target_shape.tolist()
+    ts = list(target_shape)
     ts = [':'+str(tss) for tss in ts]
     ts = ",".join(ts)
     return eval(f'deepcopy(weight[{ts}])')
@@ -167,6 +167,12 @@ class Model_Manager():
         self.name2id = []
         self.layername2id = []
         self.last_scaled_layer = set()
+
+    def drop_parent_model(self):
+        self.model.pop(0)
+        self.dags.pop(0)
+        self.name2id.pop(0)
+        self.layername2id.pop(0)
     
     def load_models(self, models) -> None:
         for i, model in enumerate(models):
@@ -266,7 +272,7 @@ class Model_Manager():
         l = []
         conflict_node_id = self.is_conflict(model_id, query_node_id)
         while conflict_node_id != -1:
-            l += self.get_operand(model_id, conflict_node_id)
+            l += self.get_add_operand(model_id, conflict_node_id)
             conflict_node_id = self.is_conflict(model_id, conflict_node_id)
         return l
 
@@ -399,13 +405,13 @@ class Model_Manager():
                 self.last_scaled_layer.add(layer)
         for layer in widen_layers:
             logging.info(f'widenning layer {layer}')
-            node_id = self.layername2id[layer]
+            node_id = self.layername2id[-1][layer]
             self.widen_layer(-1, node_id)
         for layer in deepen_layers:
             logging.info(f"deepening layer {layer}")
-            node_id = self.layername2id[layer]
+            node_id = self.layername2id[-1][layer]
             self.deepen_layer(-1, node_id)
-        self.translate_model(-1)
+        self.translate_model(len(self.model)-1)
         
     def get_layers(self, model_id):
         if model_id >= len(self.dags):
