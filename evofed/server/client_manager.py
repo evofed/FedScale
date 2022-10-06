@@ -24,5 +24,9 @@ class Evofed_ClientManager(clientManager):
         else:
             del self.Clients[uniqueId]
 
-    def getCompletionTime(self, clientId, batch_size, upload_step, upload_size, download_size, model_flots):
-        return super().getCompletionTime(clientId, batch_size, upload_step, upload_size, download_size, model_flops)
+    def getCompletionTime(self, clientId, batch_size, upload_step, upload_size, download_size, model_flops=None):
+        return self.Clients[self.getUniqueId(0, clientId)].getCompletionTime(
+            batch_size=batch_size, upload_step=upload_step,
+            upload_size=upload_size, download_size=download_size,
+            model_flops=model_flops
+        )

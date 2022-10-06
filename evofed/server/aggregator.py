@@ -15,8 +15,8 @@ import time
 import numpy as np
 from model_manager import Model_Manager
 from evofed.model.init_model import init_model
-from model_manager import shape_match
-from evofed.server.client_manager import EvoFed_ClientManager
+from model_manager import shape_match, get_flops
+from client_manager import Evofed_ClientManager
 
 
 class EvoFed_Aggregator(Aggregator):
@@ -31,10 +31,12 @@ class EvoFed_Aggregator(Aggregator):
         self.tasks_round = [0]
         self.model_update_size = [0.]
         self.loss_accumulator = collections.defaultdict(list)
+        self.client_manager = self.init_client_manager(self.args)
 
         # ======== evofed specific attributes ========
         self.model_weights_name = []
         self.model_weights_weights = []
+        self.model_flops = []
         self.latest_model_layer_rankings = []
         self.layer_gradients = [collections.defaultdict(list)]
         self.global_training_loss = collections.defaultdict(list)
@@ -47,7 +49,7 @@ class EvoFed_Aggregator(Aggregator):
 
     
     def init_client_manager(self, args):
-        client_manager = EvoFed_ClientManager(args.sample_mode, args=args)
+        client_manager = Evofed_ClientManager(args.sample_mode, args=args)
         return client_manager
 
     def init_model(self):
@@ -76,6 +78,9 @@ class EvoFed_Aggregator(Aggregator):
         self.last_gradient_weights = [[] for _ in self.model]
         self.model_manager.load_models(models)
         self.layer_gradients = [collections.defaultdict(list) for _ in self.model]
+        for model in self.model:
+            flops = get_flops(model)
+            self.model_flops.append(flops)
 
     def tictak_client_tasks(self, sampled_clients, num_clients_to_collect):
         # NOTE: We try to remove dummy events as much as possible in simulations,
@@ -356,6 +361,7 @@ class EvoFed_Aggregator(Aggregator):
         self.latest_model_layer_rankings = []
         self.last_gradient_weights.append([])
         self.layer_gradients.append(collections.defaultdict(list))
+        self.model_flops.append(get_flops(self.model[-1]))
 
     def drop_oldest_model(self):
         logging.info("saving trained model 0")
@@ -369,6 +375,7 @@ class EvoFed_Aggregator(Aggregator):
         self.model_weights_weights.pop(0)
         self.last_gradient_weights.pop(0)
         self.layer_gradients.pop(0)
+        self.model_flops.pop(0)
         self.model_manager.drop_parent_model()
 
     def round_gradient_handler(self):
@@ -380,6 +387,20 @@ class EvoFed_Aggregator(Aggregator):
         self.latest_model_layer_rankings.append(
             [l[0] for l in flattened_gradient])
         logging.info(f'current layer ranking: {flattened_gradient}')
+
+    def get_round_duration(self, clientsToRun):
+        round_duration = []
+        for client in clientsToRun:
+            client_cfg = self.client_conf.get(client, self.args)
+            flops = self.model_flops[self.model_assignment[client]]
+            exe_cost = self.client_manager.getCompletionTime(client, 
+                                                             batch_size=client_cfg.batch_size, upload_step=client_cfg.local_steps,
+                                                             upload_size=self.model_update_size[0], download_size=self.model_update_size[0],
+                                                             model_flops=flops)
+            round_duration.append(exe_cost['computation'] + \
+                exe_cost['communication'])
+        return max(round_duration)
+
 
     def round_completion_handler(self):
         self.global_virtual_clock += self.round_duration
@@ -435,6 +456,9 @@ class EvoFed_Aggregator(Aggregator):
 
         self.model_assignment, self.tasks_round = self.model_assign(
             clientsToRun)
+
+        # update round duration according to flops
+        round_duration = self.get_round_duration(clientsToRun)
 
         # issue requests to the resource manager; Tasks ordered by the completion time
         self.resource_manager.register_tasks(clientsToRun)

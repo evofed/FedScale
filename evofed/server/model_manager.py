@@ -8,6 +8,7 @@ from evofed.lib.net2netlib import *
 from copy import deepcopy
 import numpy as np
 import math
+from thop import profile
 
 omit_operator = ['Identity', 'Constant']
 conflict_operator = ['Add']
@@ -155,6 +156,13 @@ def shape_match(trained_weight: torch.Tensor, weight: torch.Tensor) -> list:
     else:
         new_weight = deepcopy(trained_weight)
     return new_weight
+
+def get_flops(model, input=None):
+    if input == None:
+        input = torch.randn(1,3,28,28)
+    macs, _ = profile(model, inputs=(input, ), verbose=False)
+    return macs
+
 
 class Model_Manager():
     def __init__(self, seed=2333) -> None:
