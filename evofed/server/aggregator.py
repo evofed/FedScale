@@ -35,10 +35,13 @@ class EvoFed_Aggregator(Aggregator):
 
         # ======== evofed specific attributes ========
         self.model_weights_name = []
+        # weight_name = self.model_weights_name[model_id][weight_id]
         self.model_weights_weights = []
+        # weight_weight = self.model_weights_weights[model_id][weight_name]
         self.model_flops = []
         self.latest_model_layer_rankings = []
         self.layer_gradients = [collections.defaultdict(list)]
+        # layer_gradient = self.layer_gradients[model_id][layer_name][round]
         self.global_training_loss = collections.defaultdict(list)
         self.local_training_loss = collections.defaultdict(list)
         self.global_training_time = []
@@ -47,12 +50,12 @@ class EvoFed_Aggregator(Aggregator):
         self.flatten_client_duration = []
         self.saved_id = 0
 
-    
     def init_client_manager(self, args):
         client_manager = Evofed_ClientManager(args.sample_mode, args=args)
         return client_manager
 
     def init_model(self):
+        # check model source, enable multiple model init
         if self.server_config['model_source'] == 'fedscale':
             models = [init_model(
                 self.args.task, self.args.model, self.args.data_set)]
@@ -61,10 +64,12 @@ class EvoFed_Aggregator(Aggregator):
             model_paths = self.server_config['model_path'].split(
                 ',') if ',' in self.server_config['model_path'] else [self.server_config['model_path']]
             for model_path in model_paths:
+                model_path = model_path.strip()
                 with open(f"FedScale/checkpoints/{model_path}.pth.tar", 'rb') as f:
                     model = pickle.load(f)
                     models.append(model)
-            logging.info(f"loading {len(models)} models from server: {model_paths}")
+            logging.info(
+                f"loading {len(models)} models from server: {model_paths}")
         else:
             models = [init_model(
                 self.args.task, self.server_config['model_source'], self.args.data_set)]
@@ -72,12 +77,14 @@ class EvoFed_Aggregator(Aggregator):
         self.model = models
         self.model_weights = [model.state_dict() for model in self.model]
         for model_weight in self.model_weights:
-            self.model_weights_name.append([param_name for param_name in model_weight])
+            self.model_weights_name.append(
+                [param_name for param_name in model_weight])
             self.model_weights_weights.append(collections.defaultdict(list))
         self.model_manager = Model_Manager(int(self.server_config['seed']))
         self.last_gradient_weights = [[] for _ in self.model]
         self.model_manager.load_models(models)
-        self.layer_gradients = [collections.defaultdict(list) for _ in self.model]
+        self.layer_gradients = [
+            collections.defaultdict(list) for _ in self.model]
         for model in self.model:
             flops = get_flops(model)
             self.model_flops.append(flops)
@@ -213,11 +220,13 @@ class EvoFed_Aggregator(Aggregator):
     def get_soft_agg_weight(self, trained_model_id, aggregated_model_id):
         if trained_model_id == aggregated_model_id:
             return 1.0
-        elif trained_model_id > aggregated_model_id:
+        elif int(trained_model_id) > int(aggregated_model_id):
+            logging.info(f"disable aggregating higher model to lower model")
             return 0.0
         else:
-            return 0.1 / (self.round - 100 * int(aggregated_model_id))
-    
+            return 0.1 / max(self.round - 100 * int(aggregated_model_id), 1)
+        # return 1.0
+
     def soft_aggregate_client_weights(self, results):
         trained_model_id = results['model_id']
         for model_id in range(len(self.model)):
@@ -230,16 +239,20 @@ class EvoFed_Aggregator(Aggregator):
                 ).to(device=self.device)
                 if p in self.model_weights_name[model_id]:
                     d_type = self.model_weights[model_id][p].data.dtype
-                    weight = self.get_soft_agg_weight(trained_model_id, model_id)
+                    weight = self.get_soft_agg_weight(
+                        trained_model_id, model_id)
                     if d_type == torch.int64 and trained_model_id != model_id:
                         continue
                     self.model_weights_weights[model_id][p].append(weight)
-                    transformed_weight = shape_match(param_weight, self.model_weights[model_id][p].data)
-                    if sum(self.model_in_update[model_id]) == 1:
-                        self.model_weights[model_id][p].data = weight * transformed_weight
+                    transformed_weight = shape_match(
+                        param_weight, self.model_weights[model_id][p].data)
+                    if sum(self.model_in_update) == 1:
+                        self.model_weights[model_id][p].data = (
+                            weight * transformed_weight).to(dtype=d_type)
                     else:
-                        self.model_weights[model_id][p].data += weight * transformed_weight
-            
+                        self.model_weights[model_id][p].data += (
+                            weight * transformed_weight).to(dtype=d_type)
+
             if sum(self.model_in_update) == sum(self.tasks_round):
                 # logging.info(f"soft aggregation history of model {model_id}: {self.model_weights_weights[model_id]}")
                 for p in self.model_weights[model_id]:
@@ -250,8 +263,6 @@ class EvoFed_Aggregator(Aggregator):
                         )
                     ).to(dtype=d_type)
                     self.model_weights_weights[model_id][p] = []
-        
-
 
     def save_last_param(self):
         for model_id, model in enumerate(self.model):
@@ -284,7 +295,7 @@ class EvoFed_Aggregator(Aggregator):
             chosen_model_id = self.round % len(self.model)
             assignment = {}
             for client in clientsToRun:
-                assignment[client] = chosen_model_id
+                assignment[str(client)] = chosen_model_id
             tasks = []
             for model_id in range(len(self.model)):
                 if model_id == chosen_model_id:
@@ -315,7 +326,7 @@ class EvoFed_Aggregator(Aggregator):
                 return False
         else:
             return False
-    
+
     def finish_training_criterion(self) -> bool:
         if len(self.model) == 1:
             return False
@@ -356,7 +367,8 @@ class EvoFed_Aggregator(Aggregator):
         self.model_manager.efficient_model_scale(selected_layers)
         self.model.append(self.model_manager.model[-1])
         self.model_weights.append(self.model_manager.model[-1].state_dict())
-        self.model_weights_name.append([param_name for param_name in self.model_weights[-1]])
+        self.model_weights_name.append(
+            [param_name for param_name in self.model_weights[-1]])
         self.model_weights_weights.append(collections.defaultdict(list))
         self.latest_model_layer_rankings = []
         self.last_gradient_weights.append([])
@@ -365,7 +377,8 @@ class EvoFed_Aggregator(Aggregator):
 
     def drop_oldest_model(self):
         logging.info("saving trained model 0")
-        model_path = os.path.join(logger.logDir, 'model_'+str(self.saved_id)+'_trained.pth.tar')
+        model_path = os.path.join(
+            logger.logDir, 'model_'+str(self.saved_id)+'_trained.pth.tar')
         with open(model_path, 'wb') as f:
             pickle.dump(self.model[self.saved_id], f)
         self.saved_id += 1
@@ -377,6 +390,11 @@ class EvoFed_Aggregator(Aggregator):
         self.layer_gradients.pop(0)
         self.model_flops.pop(0)
         self.model_manager.drop_parent_model()
+        for model_id in self.global_training_loss:
+            if model_id != 0:
+                self.global_training_loss[model_id -
+                                          1] = self.global_training_loss[model_id]
+        self.global_training_loss.pop(len(self.global_training_loss) - 1)
 
     def round_gradient_handler(self):
         flattened_gradient = []
@@ -392,15 +410,15 @@ class EvoFed_Aggregator(Aggregator):
         round_duration = []
         for client in clientsToRun:
             client_cfg = self.client_conf.get(client, self.args)
-            flops = self.model_flops[self.model_assignment[client]]
-            exe_cost = self.client_manager.getCompletionTime(client, 
+            flops = self.model_flops[self.model_assignment[str(client)]]
+            exe_cost = self.client_manager.getCompletionTime(client,
                                                              batch_size=client_cfg.batch_size, upload_step=client_cfg.local_steps,
-                                                             upload_size=self.model_update_size[0], download_size=self.model_update_size[0],
+                                                             upload_size=self.model_update_size[
+                                                                 0], download_size=self.model_update_size[0],
                                                              model_flops=flops)
-            round_duration.append(exe_cost['computation'] + \
-                exe_cost['communication'])
+            round_duration.append(exe_cost['computation'] +
+                                  exe_cost['communication'])
         return max(round_duration)
-
 
     def round_completion_handler(self):
         self.global_virtual_clock += self.round_duration
