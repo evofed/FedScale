@@ -1,11 +1,12 @@
 model_source: nasbench201 # fedscale, load, or nasbench201
-model_path: model_0_r,model_1_r,model_2_r
-aggregate_mode: soft # normal or soft
+model_path: 
+aggregate_mode: normal # normal or soft
 transform_criterion: converge
+transform_mode: expand # co-train
 converge_M: 100
 converge_N: 100
 converge_C: 0.001
-drop_C: 0.0001
+drop_C: 0
 layer_selection_alpha: 0.9
 seed: 2333
 model_assignment: naive # naive, round-robin

@@ -364,16 +364,32 @@ class EvoFed_Aggregator(Aggregator):
         selected_layers = self.select_layers()
         logging.info("FL Transform...")
         logging.info(f'selected layers {selected_layers} to transform')
-        self.model_manager.efficient_model_scale(selected_layers)
-        self.model.append(self.model_manager.model[-1])
-        self.model_weights.append(self.model_manager.model[-1].state_dict())
-        self.model_weights_name.append(
-            [param_name for param_name in self.model_weights[-1]])
-        self.model_weights_weights.append(collections.defaultdict(list))
-        self.latest_model_layer_rankings = []
-        self.last_gradient_weights.append([])
-        self.layer_gradients.append(collections.defaultdict(list))
-        self.model_flops.append(get_flops(self.model[-1]))
+        if self.server_config['transform_mode'] == 'co-train':
+            self.model_manager.efficient_model_scale(selected_layers)
+            self.model.append(self.model_manager.model[-1])
+            self.model_weights.append(self.model_manager.model[-1].state_dict())
+            self.model_weights_name.append(
+                [param_name for param_name in self.model_weights[-1]])
+            self.model_weights_weights.append(collections.defaultdict(list))
+            self.latest_model_layer_rankings = []
+            self.last_gradient_weights.append([])
+            self.layer_gradients.append(collections.defaultdict(list))
+            self.model_flops.append(get_flops(self.model[-1]))
+        else:
+            model_path = os.path.join(
+            logger.logDir, 'model_'+str(self.saved_id)+'_trained.pth.tar')
+            with open(model_path, 'wb') as f:
+                pickle.dump(self.model[0], f)
+            self.model_manager.efficient_model_scale(selected_layers)
+            self.model = [self.model_manager.model[-1]]
+            self.model_weights = [self.model_manager.model[-1].state_dict()]
+            self.model_weights_name = [[param_name for param_name in self.model_weights[-1]]]
+            self.model_weights_weights = [collections.defaultdict(list)]
+            self.latest_model_layer_rankings = []
+            self.last_gradient_weights = [[]]
+            self.layer_gradients = [collections.defaultdict(list)]
+            self.model_flops = [get_flops(self.model[-1])]
+            self.global_training_loss = collections.defaultdict(list)
 
     def drop_oldest_model(self):
         logging.info("saving trained model 0")
@@ -556,11 +572,18 @@ class EvoFed_Aggregator(Aggregator):
                          .format(model_id, self.round, self.global_virtual_clock, top_1, top_5, loss, test_len))
 
     def get_client_conf(self, clientId):
-        conf = {
-            'learning_rate': self.args.learning_rate,
-            'model_id': self.model_assignment[str(clientId)],
-            'layer_names': self.model_manager.get_layers(self.model_assignment[str(clientId)])
-        }
+        if self.server_config['transform_mode'] == 'co-train':
+            conf = {
+                'learning_rate': self.args.learning_rate,
+                'model_id': self.model_assignment[str(clientId)],
+                'layer_names': self.model_manager.get_layers(self.model_assignment[str(clientId)])
+            }
+        else:
+            conf = {
+                'learning_rate': self.args.learning_rate,
+                'model_id': self.model_assignment[str(clientId)],
+                'layer_names': self.model_manager.get_layers(-1)
+            }
         return conf
 
     def event_monitor(self):
