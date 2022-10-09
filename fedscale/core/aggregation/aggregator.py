@@ -525,20 +525,17 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 logging.info(f'current loss: {self.curr_model_loss[comming_model_id]}')
                 # if abs(self.curr_model_loss[comming_model_id] - self.last_model_loss[comming_model_id]) < self.args.convergent_threshold:
                 #     self.converged[comming_model_id] = 1
-                if len(self.train_loss_buffer) > 100:
+                if len(self.train_loss_buffer) > self.args.converge_M + self.args.converge_N:
                     self.train_loss_buffer.pop(0)
-                    slope = abs(self.train_loss_buffer[0] - self.train_loss_buffer[-1]) / 100
-                    logging.info(f'current slope {slope}')
+                    slope = 0
+                    for i in range(self.args.converge_N):
+                        slope += abs(self.train_loss_buffer[i] - self.train_loss_buffer[i+self.args.converge_M]) / self.args.converge_M
+                    slope /= self.args.converge_N
                     if slope < self.args.convergent_threshold:
+                        logging.info(f'current average slope {slope} < {self.args.convergent_threshold}, ready to transform')
                         self.converged[comming_model_id] = 1
-                    # slopes = [abs(self.train_loss_buffer[i+1] - self.train_loss_buffer[i]) for i in range(len(self.train_loss_buffer)-1)]
-                    # logging.info(f'current slope {slopes}')
-                    # converged = 1
-                    # for slope in slopes:
-                    #     if slope >= self.args.convergent_threshold:
-                    #         converged = 0
-                    #         break
-                    # self.converged[comming_model_id] = converged
+                    else:
+                        logging.info(f'current average slope {slope} >= {self.args.convergent_threshold}, continue training')
         else:
             for model_id in range(len(self.model)):
                 weight_coeff = self.model_manager.get_candidate_similarity(model_id, comming_model_id)
@@ -712,7 +709,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             if self.curr_model_loss[i] != 0:
                 self.last_model_loss[i] = self.curr_model_loss[i]
 
-        if (sum(self.converged) == len(self.model) and self.args.model == 'train-trans') or \
+        if (sum(self.converged) == len(self.model) and self.args.mode == 'train-trans') or \
             (self.args.mode == 'trans-train' and self.round == 1):
             logging.info("FL Transforming")
             self.transform_model()
