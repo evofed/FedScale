@@ -621,6 +621,10 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         """
         return pickle.dumps(responses)
 
+    def save_global_model(self):
+        with open(os.path.join(logger.logDir, 'global_model.pth.tar'), 'wb') as model_out:
+            pickle.dump(self.model, model_out)
+
     def testing_completion_handler(self, client_id, results):
         """Each executor will handle a subset of testing dataset
         
@@ -629,6 +633,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             results (dictionary): The client test results.
 
         """
+
+        self.save_global_model()
 
         results = results['results']
 
@@ -821,6 +827,9 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # NOTE: in simulation mode, response data is pickle for faster (de)serialization
         response = job_api_pb2.ServerResponse(event=current_event,
                                           meta=response_msg, data=response_data)
+        
+        if current_event != commons.DUMMY_EVENT:
+            logging.info(f"Issue EVENT ({current_event}) to EXECUTOR ({executor_id})")
         
         return response
 
