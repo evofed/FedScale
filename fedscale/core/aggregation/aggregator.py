@@ -309,6 +309,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                     sampledClientsReal.append(client_to_run)
                     completionTimes.append(roundDuration)
                     completed_client_clock[client_to_run] = exe_cost
+            
+            logging.info(f"log clients' completion time: {completed_client_clock}")
 
             num_clients_to_collect = min(
                 num_clients_to_collect, len(completionTimes))
@@ -769,10 +771,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         executor_id = request.executor_id
         executor_info = self.deserialize_response(request.executor_info)
         if executor_id not in self.individual_client_events:
-            # logging.info(f"Detect new client: {executor_id}, executor info: {executor_info}")
             self.individual_client_events[executor_id] = collections.deque()
-        else:
-            logging.info(f"Previous client: {executor_id} resumes connecting")
 
         # We can customize whether to admit the clients here
         self.executor_info_handler(executor_id, executor_info)
@@ -822,8 +821,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # NOTE: in simulation mode, response data is pickle for faster (de)serialization
         response = job_api_pb2.ServerResponse(event=current_event,
                                           meta=response_msg, data=response_data)
-        if current_event != commons.DUMMY_EVENT:
-            logging.info(f"Issue EVENT ({current_event}) to EXECUTOR ({executor_id})")
         
         return response
 
@@ -841,8 +838,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         executor_id, client_id, event = request.executor_id, request.client_id, request.event
         execution_status, execution_msg = request.status, request.msg
         meta_result, data_result = request.meta_result, request.data_result
-
-        logging.info(f'got the execution completion infomation with event {event} from client {client_id} of executor {executor_id}')
 
         if event == commons.CLIENT_TRAIN:
             # Training results may be uploaded in CLIENT_EXECUTE_RESULT request later,
