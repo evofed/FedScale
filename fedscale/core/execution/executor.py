@@ -134,11 +134,21 @@ class Executor(object):
 
         return training_sets, testing_sets
 
+    def init_client_testing_data(self):
+        client_test_dataset = init_client_testing_dataset()
+        client_testing_sets = DataPartitioner(
+                data=client_test_dataset, args=self.args, numOfClass=self.args.num_class)
+        client_testing_sets.partition_data_helper(
+            num_clients=self.args.num_participants, data_map_file=self.args.test_data_map_file)
+        return client_testing_sets
+
     def run(self):
         """Start running the executor by setting up execution and communication environment, and monitoring the grpc message.
         """
         self.setup_env()
         self.training_sets, self.testing_sets = self.init_data()
+        if self.args.data_set in ['femnist']:
+            self.client_testing_sets = self.init_client_testing_data()
         self.setup_communication()
         self.event_monitor()
 
@@ -355,25 +365,48 @@ class Executor(object):
             test_res = client.test(args, self.this_rank, model, device=device)
             _, _, _, testResults = test_res
         else:
-            data_loader = select_dataset(self.this_rank, self.testing_sets,
-                                         batch_size=args.test_bsz, args=args,
-                                         isTest=True, collate_fn=self.collate_fn
-                                         )
+            if not config['test_clients']:
+                data_loader = select_dataset(self.this_rank, self.testing_sets,
+                                            batch_size=args.test_bsz, args=args,
+                                            isTest=True, collate_fn=self.collate_fn
+                                            )
 
-            if self.task == 'voice':
-                criterion = CTCLoss(reduction='mean').to(device=device)
+                if self.task == 'voice':
+                    criterion = CTCLoss(reduction='mean').to(device=device)
+                else:
+                    criterion = torch.nn.CrossEntropyLoss().to(device=device)
+
+                if self.args.engine == commons.PYTORCH:
+                    test_res = test_model(self.this_rank, model, data_loader,
+                                        device=device, criterion=criterion, tokenizer=tokenizer)
+                else:
+                    raise Exception(f"Need customized implementation for model testing in {self.args.engine} engine")
+
+                test_loss, acc, acc_5, testResults = test_res
+                logging.info("After aggregation round {}, CumulTime {}, eval_time {}, test_loss {}, test_accuracy {:.2f}%, test_5_accuracy {:.2f}% \n"
+                            .format(self.round, round(time.time() - self.start_run_time, 4), round(time.time() - evalStart, 4), test_loss, acc*100., acc_5*100.))
             else:
-                criterion = torch.nn.CrossEntropyLoss().to(device=device)
-
-            if self.args.engine == commons.PYTORCH:
-                test_res = test_model(self.this_rank, model, data_loader,
-                                      device=device, criterion=criterion, tokenizer=tokenizer)
-            else:
-                raise Exception(f"Need customized implementation for model testing in {self.args.engine} engine")
-
-            test_loss, acc, acc_5, testResults = test_res
-            logging.info("After aggregation round {}, CumulTime {}, eval_time {}, test_loss {}, test_accuracy {:.2f}%, test_5_accuracy {:.2f}% \n"
-                         .format(self.round, round(time.time() - self.start_run_time, 4), round(time.time() - evalStart, 4), test_loss, acc*100., acc_5*100.))
+                # partition in on the fly
+                all_clients = list(range(len(self.client_testing_sets.partitions)))
+                partition = len(all_clients) // self.num_executors
+                testResults = {}
+                if self.this_rank != self.num_executors:
+                    test_clients = all_clients[(self.this_rank-1)*partition:self.this_rank*partition] 
+                else:
+                    test_clients = all_clients[(self.this_rank-1)*partition:]
+                logging.info(f"testing clients {test_clients}")
+                if self.task == 'voice':
+                    criterion = CTCLoss(reduction='mean').to(device=device)
+                else:
+                    criterion = torch.nn.CrossEntropyLoss().to(device=device)
+                for client_id in test_clients:
+                    client_data = select_dataset(client_id, self.client_testing_sets,
+                                                 batch_size=args.test_bsz, args=self.args,
+                                                 collate_fn=self.collate_fn)
+                    test_res = client_test_model(client_id, model, client_data,
+                                                device=device, criterion=criterion, tokenizer=tokenizer)
+                    _, _, _, client_results = test_res
+                    testResults[client_id] = client_results
 
         gc.collect()
 

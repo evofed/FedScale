@@ -34,6 +34,7 @@ import fedscale.core.config_parser as parser
 from fedscale.dataloaders.divide_data import DataPartitioner, select_dataset
 from fedscale.dataloaders.utils_data import get_data_transform
 from fedscale.utils.model_test_module import test_model
+from fedscale.utils.model_test_module import client_test_model
 # FedScale model libs
 from fedscale.utils.models.model_provider import get_cv_model
 
@@ -390,3 +391,13 @@ def init_dataset():
             sys.exit(-1)
 
     return train_dataset, test_dataset
+
+def init_client_testing_dataset():
+    import_libs()
+    from fedscale.dataloaders.femnist import FEMNIST
+    train_transform, _ = get_data_transform('mnist')
+    if parser.args.data_set == 'femnist':
+        client_test_dataset = FEMNIST(
+            parser.args.data_dir, dataset='test', transform=train_transform
+        )
+    return client_test_dataset

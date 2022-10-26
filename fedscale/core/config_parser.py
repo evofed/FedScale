@@ -218,6 +218,10 @@ parser.add_argument('--noise-max', default=0.5,
 parser.add_argument('--no-bidirectional', dest='bidirectional', action='store_false', default=True,
                     help='Turn off bi-directional RNNs, introduces lookahead convolution')
 
+# task specific
+parser.add_argument('--test_data_map_file', type=str, default=None)
+parser.add_argument('--client_eval_interval', type=int, default=500)
+
 args, unknown = parser.parse_known_args()
 args.use_cuda = eval(args.use_cuda)
 

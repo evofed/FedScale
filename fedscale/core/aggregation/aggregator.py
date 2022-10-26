@@ -101,6 +101,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         # ======== Task specific ============
         self.init_task_context()
+        self.test_clients = False
 
     def setup_env(self):
         """Set up experiments environment and server optimizer
@@ -565,6 +566,10 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.client_training_results = []
         self.loss_accumulator = []
         self.update_default_task_config()
+
+        # decide if need to test per client
+        if self.round % self.args.client_eval_interval == 0:
+            self.test_clients = True
         
         if self.round >= self.args.rounds:
             self.broadcast_aggregator_events(commons.SHUT_DOWN)
@@ -643,8 +648,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         # Have collected all testing results
 
-        if len(self.test_result_accumulator) == len(self.executors):
-            
+        if len(self.test_result_accumulator) == len(self.executors) and not self.test_clients:
             logger.aggregate_test_result(
                 self.test_result_accumulator, self.args.task, \
                 self.round, self.global_virtual_clock, self.testing_history)
@@ -655,6 +659,9 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             if len(self.loss_accumulator):
                 self.log_test_result()
 
+            self.broadcast_events_queue.append(commons.START_ROUND)
+        elif len(self.test_result_accumulator) == len(self.executors):
+            self.test_clients = False
             self.broadcast_events_queue.append(commons.START_ROUND)
 
     def broadcast_aggregator_events(self, event):
@@ -726,7 +733,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             dictionary: The testing config for new task.
         
         """
-        return {'client_id': client_id}
+        return {'client_id': client_id, 'test_clients': self.test_clients}
 
     def get_global_model(self):
         """Get global model that would be used by all FL clients (in default FL)
