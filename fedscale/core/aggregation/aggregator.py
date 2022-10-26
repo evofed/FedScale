@@ -31,16 +31,10 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         args (dictionary): Variable arguments for fedscale runtime config. defaults to the setup in arg_parser.py
 
     """
-    def __init__(self, args):
-        logging.info(f"Job args {args}")
-
-        
+    def __init_fedscale(self, args):
         self.args = args
         self.experiment_mode = args.experiment_mode
-        self.device = args.cuda_device if args.use_cuda else torch.device(
-            'cpu')
-
-        # self.max_learning_rate = self.args.learning_rate
+        self.device = args.cuda_device if args.use_cuda else torch.device('cpu')
 
         # ======== env information ========
         self.this_rank = 0
@@ -49,22 +43,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.resource_manager = ResourceManager(self.experiment_mode)
         self.client_manager = self.init_client_manager(args=args)
 
-        # ======== model and data ========
-        self.model = [None]
-        self.model_in_update = [0 for _ in range(0, len(self.model))]
         self.update_lock = threading.Lock()
-        # all weights including bias/#_batch_tracked (e.g., state_dict)
-        self.model_weights = [collections.OrderedDict() for _ in range(0, len(self.model))]
-        self.last_gradient_weights = []  # only gradient variables
-        self.model_state_dict = None
 
-        # ======== specialized model and data ========
-        self.model_rng = Random()
-        self.mapped_models = {}
-        self.test_model_id = 0
-        self.test_result_accumulator = [[] for _ in range(0, len(self.model))]
-        self.tasks_round = [0 for _ in range(0, len(self.model))]
-        self.weight_coeff = [[] for _ in range(0, len(self.model))]
         # NOTE: if <param_name, param_tensor> (e.g., model.parameters() in PyTorch), then False
         # True, if <param_name, list_param_tensors> (e.g., layer.get_weights() in Tensorflow)
         self.using_group_params = self.args.engine == commons.TENSORFLOW
@@ -102,7 +82,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.stats_util_accumulator = []
         self.loss_accumulator = []
         self.client_training_results = []
-        
 
         # number of registered executors
         self.registered_executor_info = set()
@@ -111,18 +90,38 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         self.log_writer = SummaryWriter(log_dir=logDir)
 
+    def __init_evofed(self, args):
+        # ======== model and data ========
+        self.model = [None]
+        self.model_in_update = [0 for _ in range(0, len(self.model))]
+        # all weights including bias/#_batch_tracked (e.g., state_dict)
+        self.model_weights = [collections.OrderedDict() for _ in range(0, len(self.model))]
+        self.last_gradient_weights = []  # only gradient variables
+        self.model_state_dict = None
+
+        self.model_rng = Random()
+        self.mapped_models = {}
+        self.test_model_id = 0
+        self.test_result_accumulator = [[] for _ in range(0, len(self.model))]
+        self.tasks_round = [0 for _ in range(0, len(self.model))]
+        self.weight_coeff = [[] for _ in range(0, len(self.model))]
+
         # ======== Task specific ============
         self.init_task_context()
         self.model_grads_buffer = defaultdict(lambda: defaultdict(list))
         self.scaled_id = 0
         self.train_loss_buffer = []
 
+    def __init__(self, args):
+        logging.info(f"Job args {args}")
+        self.__init_fedscale(args)
+        self.__init_evofed(args)
+
     def setup_env(self):
         """Set up experiments environment and server optimizer
         """
         self.setup_seed(seed=1)
-        self.optimizer = ServerOptimizer(
-            self.args.gradient_policy, self.args, self.device)
+        self.optimizer = ServerOptimizer(self.args.gradient_policy, self.args, self.device)
 
     def setup_seed(self, seed=1):
         """Set global random seed for better reproducibility
@@ -531,14 +530,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                     logging.info(f'current slope {slope}')
                     if slope < self.args.convergent_threshold:
                         self.converged[comming_model_id] = 1
-                    # slopes = [abs(self.train_loss_buffer[i+1] - self.train_loss_buffer[i]) for i in range(len(self.train_loss_buffer)-1)]
-                    # logging.info(f'current slope {slopes}')
-                    # converged = 1
-                    # for slope in slopes:
-                    #     if slope >= self.args.convergent_threshold:
-                    #         converged = 0
-                    #         break
-                    # self.converged[comming_model_id] = converged
         else:
             for model_id in range(len(self.model)):
                 weight_coeff = self.model_manager.get_candidate_similarity(model_id, comming_model_id)
@@ -579,14 +570,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                         logging.info(f'current slope {slope}')
                         if slope < self.args.convergent_threshold:
                             self.converged[model_id] = 1
-                        # slopes = [self.train_loss_buffer[i+1] - self.train_loss_buffer[i] for i in range(len(self.train_loss_buffer)-1)]
-                        # logging.info(f'current slope {slopes}')
-                        # converged = 1
-                        # for slope in slopes:
-                        #     if slope >= self.args.convergent_threshold:
-                        #         converged = 0
-                        #         break
-                        # self.converged[model_id] = converged
             
     def save_last_param(self):
         """ Save the last model parameters
