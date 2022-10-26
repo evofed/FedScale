@@ -493,75 +493,81 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         
         comming_model_id = self.mapped_models[client_id]
         if not need_soft:
-            self.curr_model_loss[comming_model_id] += results['moving_loss']
-            self.model_in_update[comming_model_id] += 1
+            self.normal_weight_aggregation(results, comming_model_id)
+        else:
+            self.soft_weight_aggregation(results, comming_model_id)
+
+    def soft_weight_aggregation(self, results, comming_model_id):
+        for model_id in range(len(self.model)):
+            weight_coeff = self.model_manager.get_candidate_similarity(model_id, comming_model_id)
+            self.weight_coeff[model_id].append(weight_coeff)
+            self.curr_model_loss[model_id] += results['moving_loss'] * weight_coeff
+            self.model_in_update[model_id] += 1
+
             for p in results['update_weight']:
-                if self.model_in_update[comming_model_id] == 1:
-                    self.model_weights[comming_model_id][p].data = results['update_weight'][p]
-                else:
-                    self.model_weights[comming_model_id][p].data += results['update_weight'][p]
-            # aggregate layer gradients
+                if p not in self.model_weight[model_id].keys():
+                    continue
+                param_weight = results['update_weight'][p]
+                self.model_weights[model_id][p].data = self.model_manager.aggregate_weights(
+                        self.model_weights[model_id][p].data, param_weight,
+                        model_id, comming_model_id, self.model_in_update[model_id] == 1
+                    )
             for l in results['grad_dict']:
-                if self.model_in_update[comming_model_id] == 1:
-                    self.model_grads_buffer[comming_model_id][l].append(results['grad_dict'][l])
-                else:
-                    self.model_grads_buffer[comming_model_id][l][-1] += results['grad_dict'][l]
-            if self.model_in_update[comming_model_id] == self.tasks_round[comming_model_id]:
-                for p in self.model_weights[comming_model_id]:
-                    d_type = self.model_weights[comming_model_id][p].data.dtype
-                    self.model_weights[comming_model_id][p].data = (
-                        self.model_weights[comming_model_id][p] / float(self.tasks_round[comming_model_id])).to(dtype=d_type)
-                for l in self.model_grads_buffer[comming_model_id]:
-                    self.model_grads_buffer[comming_model_id][l][-1] = (
-                        self.model_grads_buffer[comming_model_id][l][-1] / float(self.tasks_round[comming_model_id]))
-                self.weight_coeff[comming_model_id] = []
-                self.curr_model_loss[comming_model_id] = self.curr_model_loss[comming_model_id] / self.tasks_round[comming_model_id]
-                self.train_loss_buffer.append(self.curr_model_loss[comming_model_id] / self.tasks_round[comming_model_id])
-                # logging.info(f'current loss: {self.curr_model_loss[comming_model_id]}')
+                self.model_grads_buffer[model_id][l] = self.model_manager.aggregate_weights(
+                        self.model_grads_buffer[model_id][l], results['grad_dict'][l],
+                        model_id, comming_model_id, self.model_in_update[model_id] == 1
+                    )
+                # debug output
+            if self.model_in_update[model_id] == sum(self.tasks_round):
+                assert len(self.weight_coeff[model_id]) == sum(self.tasks_round), f"received weights {len(self.weight_coeff[model_id])} != tasks of this round {sum(self.tasks_round)}"
+                for p in self.model_weights[model_id]:
+                    d_type = self.model_weights[model_id][p].data.dtype
+                    self.model_weights[model_id][p].data = (
+                            self.model_weights[model_id][p] / float(sum(self.weight_coeff[model_id]))).to(dtype=d_type)
+                for l in self.model_grads_buffer[model_id]:
+                    self.model_grads_buffer[model_id][l][-1] = self.model_grads_buffer[model_id][l][-1] / float(sum(self.weight_coeff[model_id]))
+                self.weight_coeff[model_id] = []
+                self.curr_model_loss[model_id] = self.curr_model_loss[model_id] / sum(self.weight_coeff[model_id])
+                self.train_loss_buffer.append(self.curr_model_loss[model_id] / sum(self.weight_coeff[model_id]))
                 if len(self.train_loss_buffer) > 100:
                     self.train_loss_buffer.pop(0)
                     slope = abs(self.train_loss_buffer[0] - self.train_loss_buffer[-1]) / 100
                     logging.info(f'current slope {slope}')
                     if slope < self.args.convergent_threshold:
-                        self.converged[comming_model_id] = 1
-        else:
-            for model_id in range(len(self.model)):
-                weight_coeff = self.model_manager.get_candidate_similarity(model_id, comming_model_id)
-                self.weight_coeff[model_id].append(weight_coeff)
-                self.curr_model_loss[model_id] += results['moving_loss'] * weight_coeff
-                self.model_in_update[model_id] += 1
+                        self.converged[model_id] = 1
 
-                for p in results['update_weight']:
-                    if p not in self.model_weight[model_id].keys():
-                        continue
-                    param_weight = results['update_weight'][p]
-                    self.model_weights[model_id][p].data = self.model_manager.aggregate_weights(
-                        self.model_weights[model_id][p].data, param_weight,
-                        model_id, comming_model_id, self.model_in_update[model_id] == 1
-                    )
-                for l in results['grad_dict']:
-                    self.model_grads_buffer[model_id][l] = self.model_manager.aggregate_weights(
-                        self.model_grads_buffer[model_id][l], results['grad_dict'][l],
-                        model_id, comming_model_id, self.model_in_update[model_id] == 1
-                    )
-                # debug output
-                if self.model_in_update[model_id] == sum(self.tasks_round):
-                    assert len(self.weight_coeff[model_id]) == sum(self.tasks_round), f"received weights {len(self.weight_coeff[model_id])} != tasks of this round {sum(self.tasks_round)}"
-                    for p in self.model_weights[model_id]:
-                        d_type = self.model_weights[model_id][p].data.dtype
-                        self.model_weights[model_id][p].data = (
-                            self.model_weights[model_id][p] / float(sum(self.weight_coeff[model_id]))).to(dtype=d_type)
-                    for l in self.model_grads_buffer[model_id]:
-                        self.model_grads_buffer[model_id][l][-1] = self.model_grads_buffer[model_id][l][-1] / float(sum(self.weight_coeff[model_id]))
-                    self.weight_coeff[model_id] = []
-                    self.curr_model_loss[model_id] = self.curr_model_loss[model_id] / sum(self.weight_coeff[model_id])
-                    self.train_loss_buffer.append(self.curr_model_loss[model_id] / sum(self.weight_coeff[model_id]))
-                    if len(self.train_loss_buffer) > 100:
-                        self.train_loss_buffer.pop(0)
-                        slope = abs(self.train_loss_buffer[0] - self.train_loss_buffer[-1]) / 100
-                        logging.info(f'current slope {slope}')
-                        if slope < self.args.convergent_threshold:
-                            self.converged[model_id] = 1
+    def normal_weight_aggregation(self, results, comming_model_id):
+        self.curr_model_loss[comming_model_id] += results['moving_loss']
+        self.model_in_update[comming_model_id] += 1
+        for p in results['update_weight']:
+            if self.model_in_update[comming_model_id] == 1:
+                self.model_weights[comming_model_id][p].data = results['update_weight'][p]
+            else:
+                self.model_weights[comming_model_id][p].data += results['update_weight'][p]
+            # aggregate layer gradients
+        for l in results['grad_dict']:
+            if self.model_in_update[comming_model_id] == 1:
+                self.model_grads_buffer[comming_model_id][l].append(results['grad_dict'][l])
+            else:
+                self.model_grads_buffer[comming_model_id][l][-1] += results['grad_dict'][l]
+        if self.model_in_update[comming_model_id] == self.tasks_round[comming_model_id]:
+            for p in self.model_weights[comming_model_id]:
+                d_type = self.model_weights[comming_model_id][p].data.dtype
+                self.model_weights[comming_model_id][p].data = (
+                        self.model_weights[comming_model_id][p] / float(self.tasks_round[comming_model_id])).to(dtype=d_type)
+            for l in self.model_grads_buffer[comming_model_id]:
+                self.model_grads_buffer[comming_model_id][l][-1] = (
+                        self.model_grads_buffer[comming_model_id][l][-1] / float(self.tasks_round[comming_model_id]))
+            self.weight_coeff[comming_model_id] = []
+            self.curr_model_loss[comming_model_id] = self.curr_model_loss[comming_model_id] / self.tasks_round[comming_model_id]
+            self.train_loss_buffer.append(self.curr_model_loss[comming_model_id] / self.tasks_round[comming_model_id])
+                # logging.info(f'current loss: {self.curr_model_loss[comming_model_id]}')
+            if len(self.train_loss_buffer) > 100:
+                self.train_loss_buffer.pop(0)
+                slope = abs(self.train_loss_buffer[0] - self.train_loss_buffer[-1]) / 100
+                logging.info(f'current slope {slope}')
+                if slope < self.args.convergent_threshold:
+                    self.converged[comming_model_id] = 1
             
     def save_last_param(self):
         """ Save the last model parameters
