@@ -308,6 +308,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 # self.last_model_loss = [1000 for _ in range(0, len(self.model))]
                 self.curr_model_loss = [0 for _ in range(0, len(self.model))]
                 self.converged = [0 for _ in range(0, len(self.model))] # [1(model if converged) for all model in self.model]
+                self.converging = [0 for _ in range(0, len(self.model))]
                 # self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
                 # self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
 
@@ -320,6 +321,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 # self.last_model_loss = [1000 for _ in range(0, len(self.model))]
                 self.curr_model_loss = [0 for _ in range(0, len(self.model))]
                 self.converged = [0 for _ in range(0, len(self.model))]
+                self.converging = [0 for _ in range(0, len(self.model))]
                 # self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
                 # self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
 
@@ -529,12 +531,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 self.weight_coeff[model_id] = []
                 self.curr_model_loss[model_id] = self.curr_model_loss[model_id] / sum(self.weight_coeff[model_id])
                 self.train_loss_buffer.append(self.curr_model_loss[model_id] / sum(self.weight_coeff[model_id]))
-                if len(self.train_loss_buffer) > 100:
-                    self.train_loss_buffer.pop(0)
-                    slope = abs(self.train_loss_buffer[0] - self.train_loss_buffer[-1]) / 100
-                    logging.info(f'current slope {slope}')
-                    if slope < self.args.convergent_threshold:
-                        self.converged[model_id] = 1
+                self.check_convergence(model_id)
 
     def normal_weight_aggregation(self, results, comming_model_id):
         self.curr_model_loss[comming_model_id] += results['moving_loss']
@@ -558,16 +555,23 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             for l in self.model_grads_buffer[comming_model_id]:
                 self.model_grads_buffer[comming_model_id][l][-1] = (
                         self.model_grads_buffer[comming_model_id][l][-1] / float(self.tasks_round[comming_model_id]))
-            self.weight_coeff[comming_model_id] = []
             self.curr_model_loss[comming_model_id] = self.curr_model_loss[comming_model_id] / self.tasks_round[comming_model_id]
             self.train_loss_buffer.append(self.curr_model_loss[comming_model_id] / self.tasks_round[comming_model_id])
-                # logging.info(f'current loss: {self.curr_model_loss[comming_model_id]}')
-            if len(self.train_loss_buffer) > 100:
+            self.check_convergence(comming_model_id)
+            
+
+    def check_convergence(self, model_id):
+        if len(self.train_loss_buffer) > self.args.window_N + self.args.step_M:
                 self.train_loss_buffer.pop(0)
-                slope = abs(self.train_loss_buffer[0] - self.train_loss_buffer[-1]) / 100
-                logging.info(f'current slope {slope}')
-                if slope < self.args.convergent_threshold:
-                    self.converged[comming_model_id] = 1
+                slope = .0
+                for i in range(self.args.window_N):
+                    slope += abs(self.train_loss_buffer[i] - self.train_loss_buffer[i+self.args.step_M]) / self.args.step_M
+                slope /= self.args.window_N
+                logging.info(f'current accumulative slope {slope}')
+                if slope < self.args.transform_threshold:
+                    self.converging[model_id] = 1
+                if slope < self.args.transform_threshold:
+                    self.converged[model_id] = 1
             
     def save_last_param(self):
         """ Save the last model parameters
@@ -693,14 +697,14 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         #     if self.curr_model_loss[i] != 0:
         #         self.last_model_loss[i] = self.curr_model_loss[i]
 
-        if (sum(self.converged) == len(self.model) and self.args.model == 'train-trans') or \
+        if (sum(self.converging) == len(self.model) and self.args.model == 'train-trans') or \
             (self.args.mode == 'trans-train' and self.round == 1):
             logging.info("FL Transforming")
             self.transform_model()
             self.train_loss_buffer = []
             # self.last_model_loss = [1000 for _ in range(0, len(self.model))]
             # self.curr_model_loss = [0 for _ in range(0, len(self.model))]
-            self.converged = [0 for _ in range(0, len(self.model))]
+            self.converging = [0 for _ in range(0, len(self.model))]
             # self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
             # self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
             self.weight_coeff = [[] for _ in range(0, len(self.model))]
