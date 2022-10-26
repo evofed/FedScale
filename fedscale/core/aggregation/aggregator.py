@@ -308,7 +308,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 # self.last_model_loss = [1000 for _ in range(0, len(self.model))]
                 self.curr_model_loss = [0 for _ in range(0, len(self.model))]
                 self.converged = [0 for _ in range(0, len(self.model))] # [1(model if converged) for all model in self.model]
-                self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
+                # self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
                 # self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
 
                 self.round_completion_handler()
@@ -320,7 +320,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 # self.last_model_loss = [1000 for _ in range(0, len(self.model))]
                 self.curr_model_loss = [0 for _ in range(0, len(self.model))]
                 self.converged = [0 for _ in range(0, len(self.model))]
-                self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
+                # self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
                 # self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
 
                 self.round_completion_handler()
@@ -412,13 +412,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.init_model()
         self.save_last_param()
 
-        """
-        self.model_update_size = sys.getsizeof(
-            pickle.dumps(self.model))/1024.0*8.  # kbits
-        """
         self.model_update_size = [sys.getsizeof(pickle.dumps(model)) / 1024.0 * 8 for model in self.model]
-        self.client_profiles = self.load_client_profile(
-            file_path=self.args.device_conf_file)
+        self.client_profiles = self.load_client_profile(file_path=self.args.device_conf_file)
 
         self.event_monitor()
 
@@ -438,10 +433,10 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             cur_time=self.global_virtual_clock),
         )
 
-    def get_model_similarity(self, id_i, id_j):
-        if id_i == id_j:
-            return 1.0
-        return self.model_manager.get_candidate_similarity(id_i, id_j)
+    # def get_model_similarity(self, id_i, id_j):
+    #     if id_i == id_j:
+    #         return 1.0
+    #     return self.model_manager.get_candidate_similarity(id_i, id_j)
 
     def client_completion_handler(self, results, client_id):
         """We may need to keep all updates from clients,
@@ -471,8 +466,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.update_lock.acquire()
 
         # update reward
-        for i in range(0, len(self.model)):
-            self.reward[client_id - 1][i] += self.get_model_similarity(self.mapped_models[client_id], i) * results['moving_loss']
+        # for i in range(0, len(self.model)):
+        #     self.reward[client_id - 1][i] += self.get_model_similarity(self.mapped_models[client_id], i) * results['moving_loss']
 
         assert not self.using_group_params, "not support aggregate using group parameters"
 
@@ -700,7 +695,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             # self.last_model_loss = [1000 for _ in range(0, len(self.model))]
             # self.curr_model_loss = [0 for _ in range(0, len(self.model))]
             self.converged = [0 for _ in range(0, len(self.model))]
-            self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
+            # self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
             # self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
             self.weight_coeff = [[] for _ in range(0, len(self.model))]
         else:
