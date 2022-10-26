@@ -280,11 +280,11 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         logging.info("Info of all feasible clients {}".format(
             self.client_manager.getDataInfo()))
 
-    def get_permutation(self):
-        # for warm up
-        permutation = [i % len(self.model) for i in range(0, 4 * len(self.model))] # this is for warm up?
-        self.model_rng.shuffle(permutation)
-        return permutation
+    # def get_permutation(self):
+    #     # for warm up
+    #     permutation = [i % len(self.model) for i in range(0, 4 * len(self.model))] # this is for warm up?
+    #     self.model_rng.shuffle(permutation)
+    #     return permutation
 
     def executor_info_handler(self, executorId, info):
         """Handler for register executor info and it will start the round after number of
@@ -305,11 +305,11 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             if len(self.registered_executor_info) == len(self.executors):
                 self.client_register_handler(executorId, info)
 
-                self.last_model_loss = [1000 for _ in range(0, len(self.model))]
+                # self.last_model_loss = [1000 for _ in range(0, len(self.model))]
                 self.curr_model_loss = [0 for _ in range(0, len(self.model))]
                 self.converged = [0 for _ in range(0, len(self.model))] # [1(model if converged) for all model in self.model]
                 self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
-                self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
+                # self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
 
                 self.round_completion_handler()
         else:
@@ -317,28 +317,28 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             self.client_register_handler(executorId, info)
             if len(self.registered_executor_info) == len(self.executors):
 
-                self.last_model_loss = [1000 for _ in range(0, len(self.model))]
+                # self.last_model_loss = [1000 for _ in range(0, len(self.model))]
                 self.curr_model_loss = [0 for _ in range(0, len(self.model))]
                 self.converged = [0 for _ in range(0, len(self.model))]
                 self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
-                self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
+                # self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
 
                 self.round_completion_handler()
 
-    def select_model(self, client_id):
-        if len(self.permutation[client_id - 1]):
-            i = self.permutation[client_id - 1][-1]
-            self.permutation[client_id - 1].pop()
-            return i
+    # def select_model(self, client_id):
+    #     if len(self.permutation[client_id - 1]):
+    #         i = self.permutation[client_id - 1][-1]
+    #         self.permutation[client_id - 1].pop()
+    #         return i
         
-        prob = self.model_rng.random()
-        for i in range(0, len(self.model)):
-            if sum(self.reward[client_id - 1]) == 0:
-                return random.choice(list(range(len(self.model))))
-            if prob <= self.reward[client_id - 1][i] / sum(self.reward[client_id - 1]):
-                return i
-            prob -= self.reward[client_id - 1][i]
-        return len(self.model) - 1
+    #     prob = self.model_rng.random()
+    #     for i in range(0, len(self.model)):
+    #         if sum(self.reward[client_id - 1]) == 0:
+    #             return random.choice(list(range(len(self.model))))
+    #         if prob <= self.reward[client_id - 1][i] / sum(self.reward[client_id - 1]):
+    #             return i
+    #         prob -= self.reward[client_id - 1][i]
+    #     return len(self.model) - 1
     
     def tictak_client_tasks(self, sampled_clients, num_clients_to_collect):
         """Record sampled client execution information in last round. In the SIMULATION_MODE,
@@ -363,7 +363,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             # 1. remove dummy clients that are not available to the end of training
             for client_to_run in sampled_clients:
                 client_cfg = self.client_conf.get(client_to_run, self.args)
-                model_id = self.select_model(client_to_run)
+                # model_id = self.select_model(client_to_run)
+                model_id = 0 # reduce to one model running
                 exe_cost = self.client_manager.getCompletionTime(client_to_run,
                                                                  batch_size=client_cfg.batch_size, upload_step=client_cfg.local_steps,
                                                                  upload_size=self.model_update_size[model_id], download_size=self.model_update_size[model_id])
@@ -521,9 +522,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 self.weight_coeff[comming_model_id] = []
                 self.curr_model_loss[comming_model_id] = self.curr_model_loss[comming_model_id] / self.tasks_round[comming_model_id]
                 self.train_loss_buffer.append(self.curr_model_loss[comming_model_id] / self.tasks_round[comming_model_id])
-                logging.info(f'current loss: {self.curr_model_loss[comming_model_id]}')
-                # if abs(self.curr_model_loss[comming_model_id] - self.last_model_loss[comming_model_id]) < self.args.convergent_threshold:
-                #     self.converged[comming_model_id] = 1
+                # logging.info(f'current loss: {self.curr_model_loss[comming_model_id]}')
                 if len(self.train_loss_buffer) > 100:
                     self.train_loss_buffer.pop(0)
                     slope = abs(self.train_loss_buffer[0] - self.train_loss_buffer[-1]) / 100
@@ -562,8 +561,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                     self.weight_coeff[model_id] = []
                     self.curr_model_loss[model_id] = self.curr_model_loss[model_id] / sum(self.weight_coeff[model_id])
                     self.train_loss_buffer.append(self.curr_model_loss[model_id] / sum(self.weight_coeff[model_id]))
-                    # if abs(self.curr_model_loss[model_id] - self.last_model_loss[model_id]) < 0.0001:
-                    #     self.converged[model_id] = 1
                     if len(self.train_loss_buffer) > 100:
                         self.train_loss_buffer.pop(0)
                         slope = abs(self.train_loss_buffer[0] - self.train_loss_buffer[-1]) / 100
@@ -618,9 +615,9 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
     def transform_model(self):
         self.save_model()
         model_id = 0
-        for i in range(1, len(self.model)):
-            if self.last_model_loss[model_id] > self.last_model_loss[i]:
-                model_id = i
+        # for i in range(1, len(self.model)):
+        #     if self.last_model_loss[model_id] > self.last_model_loss[i]:
+        #         model_id = i
         logging.info(f'reset to model {model_id}')
         selected_layers = []
         if self.args.mode == 'train-trans':
@@ -691,20 +688,20 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         if len(self.loss_accumulator):
             self.log_train_result(avg_loss)
 
-        for i in range(0, len(self.model)):
-            if self.curr_model_loss[i] != 0:
-                self.last_model_loss[i] = self.curr_model_loss[i]
+        # for i in range(0, len(self.model)):
+        #     if self.curr_model_loss[i] != 0:
+        #         self.last_model_loss[i] = self.curr_model_loss[i]
 
         if (sum(self.converged) == len(self.model) and self.args.model == 'train-trans') or \
             (self.args.mode == 'trans-train' and self.round == 1):
             logging.info("FL Transforming")
             self.transform_model()
             self.train_loss_buffer = []
-            self.last_model_loss = [1000 for _ in range(0, len(self.model))]
-            self.curr_model_loss = [0 for _ in range(0, len(self.model))]
+            # self.last_model_loss = [1000 for _ in range(0, len(self.model))]
+            # self.curr_model_loss = [0 for _ in range(0, len(self.model))]
             self.converged = [0 for _ in range(0, len(self.model))]
             self.reward = [[0 for _ in range(0, len(self.model))] for _ in range(0, self.num_of_clients)]
-            self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
+            # self.permutation = [self.get_permutation() for _ in range(0, self.num_of_clients)]
             self.weight_coeff = [[] for _ in range(0, len(self.model))]
         else:
             self.curr_model_loss = [0 for _ in range(0, len(self.model))]
