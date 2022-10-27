@@ -56,6 +56,6 @@ job_conf:
     - step_M = 100
     - gradient_buffer_length: 5
     - nas: True
-    - mode: train
+    # - mode: from_scratch # from_one, from_multiple
     - selected_ratio: 0.9
     # - selected_layers: cells.1.downsample.1.0.0,cells.1.downsample.1.2.0

@@ -558,8 +558,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             self.curr_model_loss[comming_model_id] = self.curr_model_loss[comming_model_id] / self.tasks_round[comming_model_id]
             self.train_loss_buffer.append(self.curr_model_loss[comming_model_id] / self.tasks_round[comming_model_id])
             self.check_convergence(comming_model_id)
-            
-
+       
     def check_convergence(self, model_id):
         if len(self.train_loss_buffer) > self.args.window_N + self.args.step_M:
                 self.train_loss_buffer.pop(0)
@@ -570,7 +569,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 logging.info(f'current accumulative slope {slope}')
                 if slope < self.args.transform_threshold:
                     self.converging[model_id] = 1
-                if slope < self.args.transform_threshold:
+                if slope < self.args.convergent_threshold:
                     self.converged[model_id] = 1
             
     def save_last_param(self):
@@ -588,7 +587,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             self.last_gradient_weights = [
                 [p.data.clone() for p in model.parameters()] for model in self.model
             ]
-
 
     def round_weight_handler(self, last_model):
         """Update model when the round completes
@@ -623,22 +621,22 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # for i in range(1, len(self.model)):
         #     if self.last_model_loss[model_id] > self.last_model_loss[i]:
         #         model_id = i
-        logging.info(f'reset to model {model_id}')
+        # logging.info(f'reset to model {model_id}')
         selected_layers = []
-        if self.args.mode == 'train-trans':
-            self.model_manager.translate_base_model()
-            # choose layers
-            model_grad_rank = self.model_grads_buffer[model_id]
-            model_grad_rank = [[l, sum(model_grad_rank[l]) / float(len(model_grad_rank[l]))] for l in model_grad_rank]
-            def sort_by_second(l: list):
-                return l[1]
-            model_grad_rank.sort(key=sort_by_second)
-            max_grad = model_grad_rank[-1][1]
-            for l in model_grad_rank:
-                if l[1] > 0.9 * max_grad:
-                    selected_layers.append(l[0])
-        elif self.args.mode == 'trans-train':
-            selected_layers = [self.args.selected_layers.split(',')]
+        # if self.args.mode == 'from_scratch':
+        self.model_manager.translate_base_model()
+        # choose layers
+        model_grad_rank = self.model_grads_buffer[model_id]
+        model_grad_rank = [[l, sum(model_grad_rank[l]) / float(len(model_grad_rank[l]))] for l in model_grad_rank]
+        def sort_by_second(l: list):
+            return l[1]
+        model_grad_rank.sort(key=sort_by_second)
+        max_grad = model_grad_rank[-1][1]
+        for l in model_grad_rank:
+            if l[1] > 0.9 * max_grad:
+                selected_layers.append(l[0])
+        # elif self.args.mode == 'from_one':
+        #     selected_layers = [self.args.selected_layers.split(',')]
 
         # reset model gradient buffer
         for model_id in self.model_grads_buffer:
@@ -697,8 +695,9 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         #     if self.curr_model_loss[i] != 0:
         #         self.last_model_loss[i] = self.curr_model_loss[i]
 
-        if (sum(self.converging) == len(self.model) and self.args.model == 'train-trans') or \
-            (self.args.mode == 'trans-train' and self.round == 1):
+        # if (sum(self.converging) == len(self.model)  and self.args.model == 'train-trans') or \
+            # (self.args.mode == 'trans-train' and self.round == 1):
+        if sum(self.converging) == len(self.model):
             logging.info("FL Transforming")
             self.transform_model()
             self.train_loss_buffer = []
@@ -897,7 +896,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             dictionary: Client training config.
 
         """
-        model_id = self.mapped_models[clientId]
+        # model_id = self.mapped_models[clientId]
+        model_id = 0 # reduce to one model
         conf = {
             'learning_rate': self.args.learning_rate,
             'model': None,  # none indicates we are using the global model
@@ -920,7 +920,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # NOTE: model = None then the executor will load the global model broadcasted in UPDATE_MODEL
         model = None
         if next_clientId != None:
-            model = self.mapped_models[next_clientId]
+            # model = self.mapped_models[next_clientId]
+            model = 0 # reduce to one model
             config = self.get_client_conf(next_clientId)
             train_config = {'client_id': next_clientId, 'task_config': config}
         return train_config, model
