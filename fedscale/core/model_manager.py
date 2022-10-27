@@ -332,10 +332,10 @@ class Model_Manager():
             models.append(model.torch_model)
     
     def model_scale(self, layers):
-        return self.model[-1].model_scale(layers)
+        return self.models[-1].model_scale(layers)
     
     def get_candidate_layers(self, model_id):
-        self.models[model_id].get_weighted_layers()
+        return self.models[model_id].get_weighted_layers()
 
     
 

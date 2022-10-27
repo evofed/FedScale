@@ -187,7 +187,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         else:
             model = init_model()
 
-        self.model_manager = Model_Manager(model, candidate_capacity=self.args.candidate_capacity)
+        self.model_manager = Model_Manager(model)
         # self.model_manager.translate_base_model()
         self.model = [self.model_manager.get_latest_model()]
 
