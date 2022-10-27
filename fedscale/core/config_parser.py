@@ -221,6 +221,7 @@ parser.add_argument('--no-bidirectional', dest='bidirectional', action='store_fa
 parser.add_argument('--candidate_capacity', default=5, type=int, help='number of candidate models during search')
 parser.add_argument('--gradient_buffer_length', default=5, type=int, help='number of gradients maintained in the buffer')
 parser.add_argument('--convergent_threshold', default=0.0001, type=float, help='convergent criterion')
+parser.add_argument('--transform_threshold', default=0.001, type=float, help='convergent criterion')
 parser.add_argument('--nas', default=False, type=bool, help='whether using nas model')
 parser.add_argument('--selected_layers', default="", type=str, help='selected layer name to scale')
 # parser.add_argument('--mode', default='train', type=str, help='train | trans-train')
