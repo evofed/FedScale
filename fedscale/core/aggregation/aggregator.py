@@ -188,8 +188,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             model = init_model()
 
         self.model_manager = Model_Manager(model, candidate_capacity=self.args.candidate_capacity)
-        self.model_manager.translate_base_model()
-        self.model = [self.model_manager.base_model]
+        # self.model_manager.translate_base_model()
+        self.model = [self.model_manager.get_latest_model()]
 
         # Initiate model parameters dictionary <param_name, param>
         # self.model_weights = self.model.state_dict()
@@ -501,7 +501,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
     def soft_weight_aggregation(self, results, comming_model_id):
         for model_id in range(len(self.model)):
-            weight_coeff = self.model_manager.get_candidate_similarity(model_id, comming_model_id)
+            # weight_coeff = self.model_manager.get_candidate_similarity(model_id, comming_model_id)
+            weight_coeff = 1 # desable soft aggregation
             self.weight_coeff[model_id].append(weight_coeff)
             self.curr_model_loss[model_id] += results['moving_loss'] * weight_coeff
             self.model_in_update[model_id] += 1
@@ -624,7 +625,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # logging.info(f'reset to model {model_id}')
         selected_layers = []
         # if self.args.mode == 'from_scratch':
-        self.model_manager.translate_base_model()
+        # self.model_manager.translate_base_model()
         # choose layers
         model_grad_rank = self.model_grads_buffer[model_id]
         model_grad_rank = [[l, sum(model_grad_rank[l]) / float(len(model_grad_rank[l]))] for l in model_grad_rank]
@@ -643,8 +644,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             self.model_grads_buffer[model_id] = defaultdict(list)
 
         logging.info(f'select layers {selected_layers} to scale up')
-        self.model = [self.model_manager.tiny_model_scale(selected_layers)]
-        self.model_manager.translate_base_model()
+        self.model = [self.model_manager.model_scale(selected_layers)]
+        # self.model_manager.translate_base_model()
         self.model_weights = [model.state_dict() for model in self.model]
         for i in range(0, len(self.model)):
             self.model_weights[i] = self.model[i].state_dict()
