@@ -204,6 +204,7 @@ class Super_Model():
             self.train_loss_buffer.append(self.curr_loss)
             self.check_convergence()
             logging.info(f'(DEBUG) gradient buffer of model {self.rank}: {self.model_grads_buffer}')
+            logging.info(f'training loss of model {self.rank}: {self.curr_loss}')
 
     def check_convergence(self):
         if len(self.train_loss_buffer) > self.args.window_N + self.args.step_M:

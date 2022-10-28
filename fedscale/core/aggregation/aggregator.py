@@ -868,7 +868,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                                                             }
 
             logging.info("FL Testing for model {} in round: {}, virtual_clock: {}, top_1: {} %, top_5: {} %, test loss: {:.4f}, test len: {}"
-                         .format(self.test_model_id, self.round, self.global_virtual_clock, self.testing_history['perf'][self.round]['top_1'],
+                         .format(self.model_in_training[0], self.round, self.global_virtual_clock, self.testing_history['perf'][self.round]['top_1'],
                                  self.testing_history['perf'][self.round]['top_5'], self.testing_history['perf'][self.round]['loss'],
                                  self.testing_history['perf'][self.round]['test_len']))
 
