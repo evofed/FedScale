@@ -1,16 +1,23 @@
+from audioop import avg
 import logging
-from typing import List
+import os
+from pydoc import cli
+from select import select
+import sys
+from typing import List, Set
 import torch
 import networkx, onnx
 from onnx.helper import printable_graph
 from collections import defaultdict
 from fedscale.core.net2netlib import *
-from copy import deepcopy
+from copy import copy, deepcopy
 import random
 import numpy as np
 import math
 from thop import profile
 import torch
+from fedscale.core.logger.aggragation import logDir
+import pickle
 
 omit_operator = ['Identity', 'Constant']
 conflict_operator = ['Add']
@@ -131,14 +138,103 @@ def translate_model(model):
     return dag, name2id, layername2id
 
 class Super_Model():
-    def __init__(self, torch_model) -> None:
+    def __init__(self, torch_model, args, rank, last_scaled_layer: Set=set()) -> None:
         self.torch_model = torch_model
         self.dag, self.name2id, self.layername2id = \
             translate_model(torch_model)
         
         self.macs, self.params = profile(self.torch_model, inputs=(dummy_input,), verbose=False)
-        self.last_scaled_layer = set()
-        
+        self.last_scaled_layer = last_scaled_layer
+        self.curr_loss = 0
+        self.converged = False
+        self.converging = False
+        self.model_in_update = 0
+        self.model_weights = self.torch_model.state_dict()
+        self.model_grads_buffer = defaultdict(list)
+        self.task_round = 0
+        self.train_loss_buffer = []
+        self.args = args
+        self.rank = rank
+        self.last_gradient_weights = []
+        self.model_update_size = sys.getsizeof(pickle.dumps(torch_model)) // 1024.0 * 8.0
+
+    def is_converging(self):
+        return self.converging
+
+    def is_coverged(self):
+        return self.converged
+    
+    def set_cur_loss(self, loss):
+        self.curr_loss = loss
+
+    def reset_cur_loss(self):
+        self.curr_loss = 0
+    
+    def reset_model_in_update(self):
+        self.model_in_update = 0
+
+    def assign_task(self, task):
+        self.task_round = task
+
+    def normal_weight_aggregation(self, results):
+        self.curr_loss += results['moving_loss']
+        self.model_in_update += 1
+        for p in results['update_weight']:
+            if self.model_in_update == 1:
+                self.model_weights[p].data = results['update_weight'][p]
+            else:
+                self.model_weights[p].data += results['update_weight'][p]
+            # aggregate layer gradients
+        for l in results['grad_dict']:
+            if self.model_in_update == 1:
+                self.model_grads_buffer[l].append(results['grad_dict'][l])
+            else:
+                self.model_grads_buffer[l][-1] += results['grad_dict'][l]
+            if len(self.model_grads_buffer[l]) > self.args.gradient_buffer_length:
+                self.model_grads_buffer[l].pop(0)
+        if self.model_in_update == self.tasks_round:
+            for p in self.model_weights:
+                d_type = self.model_weights[p].data.dtype
+                self.model_weights[p].data = (
+                        self.model_weights[p] / float(self.tasks_round)).to(dtype=d_type)
+            for l in self.model_grads_buffer:
+                self.model_grads_buffer[l][-1] = (
+                        self.model_grads_buffer[l][-1] / float(self.tasks_round))
+            self.curr_model_loss = self.curr_model_loss / self.tasks_round
+            self.train_loss_buffer.append(self.curr_model_loss / self.tasks_round)
+            self.check_convergence()
+            logging.info(f'(DEBUG) gradient buffer of model {self.rank}: {self.model_grads_buffer}')
+
+    def check_convergence(self):
+        if len(self.train_loss_buffer) > self.args.window_N + self.args.step_M:
+            self.train_loss_buffer.pop(0)
+            slope = .0
+            for i in range(self.args.window_N):
+                slope += abs(self.train_loss_buffer[i] - self.train_loss_buffer[i+self.args.step_M]) / self.args.step_M
+            slope /= self.args.window_N
+            logging.info(f'current accumulative training loss slope of model {self.rank}: {slope}')
+            if slope < self.args.transform_threshold:
+                self.converging = 1
+            if slope < self.args.convergent_threshold:
+                self.converged = 1
+
+    def save_last_param(self):
+        self.last_gradient_weights = [
+            p.data.clone() for p in self.torch_model.parameters()
+        ]
+
+    def load_model_weight(self, optimizer):
+        self.torch_model.load_state_dict(self.model_weights)
+        current_grad_weights = [param.data.clone()
+                                for param in self.torch_model.parameters()]
+        optimizer.update_round_gradient(
+            self.last_gradient_weights, current_grad_weights, self.torch_model)
+
+    def save_model(self):
+        model_path = os.path.join(logDir, 'model_'+str(self.rank)+'.pth.tar')
+        with open(model_path, 'wb') as model_out:
+            pickle.dump(self.torch_model, model_out)
+
     def get_weighted_layers(self):
         layers = []
         for node_id in self.dag.nodes():
@@ -250,7 +346,7 @@ class Super_Model():
             conflict_node_id = self.is_conflict(conflict_node_id)
         return l
 
-    def widen_layer(self, node_id):
+    def widen_layer(self, node_id, new_model):
         node_name = self.dag.nodes()[node_id]['attr'].name
         children, parents, bns, ln_children, ln_parents = self.get_widen_instruction(node_id)
         node = self.dag.nodes()[node_id]['attr']
@@ -263,65 +359,79 @@ class Super_Model():
             parents.append(node_id)
         for child in children:
             node_name = self.dag.nodes()[child]['attr'].name
-            self.torch_model = widen_child_conv(
-                self.torch_model, node_name)
+            new_model = widen_child_conv(
+                new_model, node_name)
         for parent in parents:
             node_name = self.dag.nodes()[parent]['attr'].name
-            self.torch_model = widen_parent_conv(
-                self.torch_model, node_name)
+            new_model = widen_parent_conv(
+                new_model, node_name)
         for bn in bns:
             node_name = self.dag.nodes()[bn]['attr'].name
-            self.torch_model = widen_bn(
-                self.torch_model, node_name)
+            new_model = widen_bn(
+                new_model, node_name)
         for ln_child in ln_children:
             node_name = self.dag.nodes()[ln_child]['attr'].name
-            self.torch_model = widen_child_ln(
-                self.torch_model, node_name)
+            new_modell = widen_child_ln(
+                new_model, node_name)
         for ln_parent in ln_parents:
             node_name = self.dag.nodes()[ln_child]['attr'].name
             node_name = self.dag.nodes()[ln_parent]['attr'].name
-            self.torch_model = widen_parent_ln(
-                self.torch_model, node_name)
-        return parents
+            new_model = widen_parent_ln(
+                new_model, node_name)
+        return new_model
 
-    def deepen_layer(self, node_id):
+    def deepen_layer(self, node_id, new_model):
         node = self.dag.nodes()[node_id]['attr']
         if node.operator == 'Conv':
-            self.torch_model = deepen(
-                self.torch_model, node.name
+            new_model = deepen(
+                new_model, node.name
             )
 
+    def select_layers_by_gradient(self):
+        model_grad_rank = [[l, avg(self.model_grads_buffer[l])] for l in self.model_grads_buffer]
+        model_grad_rank.sort(key=lambda l: l[1])
+        max_grad = model_grad_rank[-1][1]
+        selected_layers = []
+        for l in model_grad_rank:
+            if l[1] > 0.9 *  max_grad:
+                selected_layers.append(l[0])
+        return selected_layers
+
     def model_scale(self, layers: List[str]):
+        logging.info(f"selected layers {layers} to scale up at model {self.rank}")
         widen_layers = []
         deepen_layers = []
+        scaled_layer = self.last_scaled_layer
+        new_model = deepcopy(self.torch_model)
         for layer in layers:
             if layer in self.last_scaled_layer:
                 deepen_layers.append(layer)
-                self.last_scaled_layer.remove(layer)
+                scaled_layer.remove(layer)
             else:
                 widen_layers.append(layer)
-                self.last_scaled_layer.add(layer)
+                scaled_layer.add(layer)
         for layer in widen_layers:
             logging.info(f'widenning layer {layer}')
             node_id = self.layername2id[layer]
-            self.widen_layer(node_id)
+            new_model = self.widen_layer(node_id, new_model)
         for layer in deepen_layers:
             logging.info(f"deepening layer {layer}")
             node_id = self.layername2id[layer]
-            self.deepen_layer(node_id)
-        logging.info(self.torch_model)
-        self.dag, self.name2id, self.layername2id = \
-            translate_model(self.torch_model)
-        return self.torch_model
+            new_model = self.deepen_layer(node_id, new_model)
+        logging.info(new_model)
+        # self.dag, self.name2id, self.layername2id = \
+        #     translate_model(self.torch_model)
+        return new_model, scaled_layer
 
 
 class Model_Manager():
-    def __init__(self, init_model, seed=2333) -> None:
+    def __init__(self, init_model, args) -> None:
         self.models = []
         self.add_model(init_model)
+        self.args = args
 
     def add_model(self, torch_model):
-        self.models.append(Super_Model(torch_model))
+        self.models.append(Super_Model(torch_model), self.args, len(self.models))
 
     def get_latest_model(self):
         return self.models[-1].torch_model
@@ -331,369 +441,79 @@ class Model_Manager():
         for model in self.models:
             models.append(model.torch_model)
     
-    def model_scale(self, layers):
-        return self.models[-1].model_scale(layers)
+    def model_scale(self):
+        layers = self.models[-1].select_layers_by_gradient()
+        new_model, last_scaled_layer = self.models[-1].model_scale(layers)
+        # drop the last model
+        self.models[-1] = None
+        self.models.append(Super_Model(new_model, self.args, len(self.models), last_scaled_layer))
+        return self.models[-1].torch_model
     
     def get_candidate_layers(self, model_id):
+        assert self.models[model_id] != None
         return self.models[model_id].get_weighted_layers()
 
-    
-
-    # def translate_base_model(self):
-    #     self.base_dag, self.name2id, self.layername2id = translate_model(self.base_model)
-    
-    # def translate_candidate_models(self):
-    #     for candidate_id in range(len(self.candidate_models)):
-    #         dag, _, _ = translate_model(self.candidate_models[candidate_id])
-    #         self.candidate_dags.append(dag)
-                
-    # def get_all_nodes(self):
-    #     if self.base_dag == None:
-    #         self.translate_base_model()
-    #     nodes = []
-    #     for node_id in self.base_dag.nodes():
-    #         nodes.append(self.base_dag.nodes()[node_id]['attr'])
-    #     return nodes
-
-    # def get_all_edges(self):
-    #     if self.base_dag == None:
-    #         self.translate_base_model()
-    #     return self.base_dag.edges()
-
-    # def get_base_convs(self):
-    #     convs = []
-    #     for node_id in self.base_dag.nodes():
-    #         if 'Conv' in self.base_dag.nodes()[node_id]['attr'].operator:
-    #             convs.append([node_id, self.base_dag.nodes()[node_id]['attr'].name])
-    #     return convs
-
-    # def get_weighted_layers(self):
-    #     layers = []
-    #     for node_id in self.base_dag.nodes():
-    #         if self.base_dag.nodes()[node_id]['attr'].operator in weight_operator:
-    #             layers.append([node_id, self.base_dag.nodes()[node_id]['attr'].name])
-    #     return layers
-    
-    # def get_candidate_layers(self, candidate_id):
-    #     if len(self.candidate_dags) == 0:
-    #         return self.get_weighted_layers()
-    #     layers = []
-    #     for node_id in self.candidate_dags[candidate_id].nodes():
-    #         if self.candidate_dags[candidate_id].nodes()[node_id]['attr'].operator in weight_operator:
-    #             layers.append([node_id, self.candidate_dags[candidate_id].nodes()[node_id]['attr'].name])
-    #     return layers
-
-    # def get_base_parents(self, query_node_id):
-    #     # current only support resnet, mobilenet_v2, alexnet, regnet_x_16gf, vgg19_bn
-    #     # not support shufflenet
-    #     # other nets are not tested yet
-    #     l = []
-    #     for node_id in self.base_dag.predecessors(query_node_id):
-    #         node = self.base_dag.nodes()[node_id]['attr']
-    #         if node.operator == 'BatchNormalization':
-    #             l.append(node_id)
-    #         if node.operator in weight_operator:
-    #             l.append(node_id)
-    #         else:
-    #             l += self.get_base_parents(node_id)
-    #     return l
-
-    # def get_base_children(self, query_node_id):
-    #     # current only support resnet, mobilenet_v2, alexnet, regnet_x_16gf, vgg19_bn
-    #     # not support shufflenet
-    #     # other nets are not tested yet
-    #     l = []
-    #     for node_id in self.base_dag.successors(query_node_id):
-    #         node = self.base_dag.nodes()[node_id]['attr']
-    #         if node.operator == 'BatchNormalization':
-    #             l.append(node_id)
-    #         if node.operator in weight_operator:
-    #             l.append(node_id)
-    #         else:
-    #             l += self.get_base_children(node_id)
-    #     return l
-
-    # def is_conflict(self, query_node_id):
-    #     conflict_id = -1
-    #     for node_id in self.base_dag.successors(query_node_id):
-    #         node = self.base_dag.nodes()[node_id]['attr']
-    #         if node.operator in conflict_operator:
-    #             return node_id
-    #         elif node.operator not in weight_operator:
-    #             temp_result = self.is_conflict(node_id)
-    #             if temp_result != -1:
-    #                 return temp_result
-    #     return conflict_id
-    
-    # def get_add_operand(self, add_node_id):
-    #     return self.get_base_parents(add_node_id)
-    
-    # def get_base_neighbour(self, query_node_id):
-    #     # current only support resnet, mobilenet_v2, alexnet, regnet_x_16gf, vgg19_bn
-    #     # not support shufflenet
-    #     # other nets are not tested yet
-    #     l = []
-    #     conflict_node_id = self.is_conflict(query_node_id)
-    #     while conflict_node_id != -1:
-    #         l += self.get_add_operand(conflict_node_id)
-    #         conflict_node_id = self.is_conflict(conflict_node_id)
-    #     return l
-
-    # def get_base_widen_instruction(self, query_node_id):
-    #     child_convs = set()
-    #     parent_convs = set()
-    #     child_lns = set()
-    #     parent_lns = set()
-    #     bns = set()
+    def get_model_weights(self):
+        model_weights = []
+        for super_model in self.models:
+            if super_model:
+                model_weights.append(super_model.torch_model.state_dict())
+        return model_weights
         
-    #     children = self.get_base_children(query_node_id)
-    #     neighbours = self.get_base_neighbour(query_node_id)
-    #     for neighbor in neighbours:
-    #         node = self.base_dag.nodes()[neighbor]['attr']
-    #         if node.operator == 'BatchNormalization':
-    #             bns.add(neighbor)
-    #         elif node.operator == 'Gemm':
-    #             parent_lns.add(neighbor)
-    #         else:
-    #             parent_convs.add(neighbor)
-    #         children += self.get_base_children(neighbor)
-    #     for child in children:
-    #         node = self.base_dag.nodes()[child]['attr']
-    #         if node.operator == 'BatchNormalization':
-    #             bns.add(child)
-    #         elif node.operator == 'Gemm':
-    #             child_lns.add(child)
-    #         else:
-    #             child_convs.add(child)
-    #     return list(child_convs), list(parent_convs), list(bns), list(child_lns), list(parent_lns)
-    
-    # def get_base_deepen_instruction(self, query_node_id):
-    #     out_channel, in_channel = None, None
 
-    #     # get out_channels
-    #     child = self.get_base_children(query_node_id)[0]
-    #     child_node = self.base_dag.nodes()[child]['attr']
-    #     if child_node.operator == 'BatchNormalization':
-    #         bn = get_model_layer(self.base_model, child_node.name)
-    #         out_channel = bn.num_features
-    #     else:
-    #         conv = get_model_layer(self.base_model, child_node.name)
-    #         out_channel = conv.in_channels
-        
-    #     # get out_channels
-    #     parent_node = self.base_dag.nodes()[parent_node]['attr']
-    #     conv = get_model_layer(self.base_model, parent_node.name)
-    #     in_channel = conv.out_channels
+    def reset_all_cur_loss(self):
+        for super_model in self.models:
+            if super_model:
+                super_model.reset_cur_loss()
 
-    #     return in_channel, out_channel
+    def weight_aggregation(self, results, model_id, soft: bool=False):
+        if not soft:
+            self.models[model_id].normal_weight_aggregation(results)
+        else:
+            raise NotImplementedError('not implemented soft aggregation')
 
-    # def widen_layer(self, candidate_id, node_id):
-    #     node_name = self.base_dag.nodes()[node_id]['attr'].name
-    #     children, parents, bns, ln_children, ln_parents = self.get_base_widen_instruction(node_id)
-    #     node = self.base_dag.nodes()[node_id]['attr']
-    #     if len(children) == 0 and len(ln_children) == 0:
-    #         print(f'fail to widen {node.name} as it is the last layer')
-    #         return []
-    #     if node.operator == 'Gemm':
-    #         ln_parents.append(node_id)
-    #     elif node_id not in parents:
-    #         parents.append(node_id)
-    #     for child in children:
-    #         node_name = self.base_dag.nodes()[child]['attr'].name
-    #         self.candidate_models[candidate_id] = widen_child_conv(
-    #             self.candidate_models[candidate_id], node_name)
-    #     for parent in parents:
-    #         node_name = self.base_dag.nodes()[parent]['attr'].name
-    #         self.candidate_models[candidate_id] = widen_parent_conv(
-    #             self.candidate_models[candidate_id], node_name)
-    #     for bn in bns:
-    #         node_name = self.base_dag.nodes()[bn]['attr'].name
-    #         self.candidate_models[candidate_id] = widen_bn(
-    #             self.candidate_models[candidate_id], node_name)
-    #     for ln_child in ln_children:
-    #         node_name = self.base_dag.nodes()[ln_child]['attr'].name
-    #         self.candidate_models[candidate_id] = widen_child_ln(
-    #             self.candidate_models[candidate_id], node_name
-    #         )
-    #     for ln_parent in ln_parents:
-    #         node_name = self.base_dag.nodes()[ln_child]['attr'].name
-    #         node_name = self.base_dag.nodes()[ln_parent]['attr'].name
-    #         self.candidate_models[candidate_id] = widen_parent_ln(
-    #             self.candidate_models[candidate_id], node_name
-    #         )
-    #     return parents
+    def save_last_param(self):
+        for super_model in self.models:
+            if super_model:
+                super_model.save_last_param()
 
-    # def deepen_layer(self, candidate_id, node_id):
-    #     node = self.base_dag.nodes()[node_id]['attr']
-    #     if node.operator == 'Conv':
-    #         self.candidate_models[candidate_id] = deepen(
-    #             self.candidate_models[candidate_id], node.name
-    #         )
+    def load_model_weight(self, optimizer):
+        for super_model in self.models:
+            if super_model:
+                super_model.load_model_weight(optimizer)
 
-    # def record_trajectary(self, candidate_id, widened_layers, deepened_layers):
-    #     layers = self.get_weighted_layers()
-    #     layers_onehot = np.array([0 for _ in range(len(layers))])
-    #     def nodeid2convid(node_id):
-    #         for i, conv in enumerate(layers):
-    #             if conv[0] == node_id:
-    #                 return i
-    #         raise Exception(f"not find node {node_id}")
-    #     # record widen trajectary
-    #     if len(self.widen_trajectary) == candidate_id:
-    #         self.widen_trajectary.append(layers_onehot)
-    #     else:
-    #         self.widen_trajectary[candidate_id] = layers_onehot
-    #     for node_id in widened_layers:
-    #         conv_id = nodeid2convid(node_id)
-    #         self.widen_trajectary[candidate_id][conv_id] = 1
-    #     # record deepen trajectary
-    #     if len(self.deepen_trajectary) == candidate_id:
-    #         self.deepen_trajectary.append(layers_onehot)
-    #     else:
-    #         self.deepen_trajectary[candidate_id] = layers_onehot
-    #     for node_id in deepened_layers:
-    #         conv_id = nodeid2convid(node_id)
-    #         self.deepen_trajectary[candidate_id][conv_id] = 1
+    def save_models(self):
+        for super_model in self.models:
+            if super_model:
+                super_model.save_model()
 
-    # def widen_base_layer(self, node_id):
-    #     node_name = self.base_dag.nodes()[node_id]['attr'].name
-    #     children, parents, bns, ln_children, ln_parents = self.get_base_widen_instruction(node_id)
-    #     node = self.base_dag.nodes()[node_id]['attr']
-    #     if len(children) == 0 and len(ln_children) == 0:
-    #         print(f'fail to widen {node.name} as it is the last layer')
-    #         return []
-    #     if node.operator == 'Gemm':
-    #         ln_parents.append(node_id)
-    #     elif node_id not in parents:
-    #         parents.append(node_id)
-    #     for child in children:
-    #         node_name = self.base_dag.nodes()[child]['attr'].name
-    #         self.base_model = widen_child_conv(
-    #             self.base_model, node_name)
-    #     for parent in parents:
-    #         node_name = self.base_dag.nodes()[parent]['attr'].name
-    #         self.base_model = widen_parent_conv(
-    #             self.base_model, node_name)
-    #     for bn in bns:
-    #         node_name = self.base_dag.nodes()[bn]['attr'].name
-    #         self.base_model = widen_bn(
-    #             self.base_model, node_name)
-    #     for ln_child in ln_children:
-    #         node_name = self.base_dag.nodes()[ln_child]['attr'].name
-    #         self.base_model = widen_child_ln(
-    #             self.base_model, node_name
-    #         )
-    #     for ln_parent in ln_parents:
-    #         node_name = self.base_dag.nodes()[ln_child]['attr'].name
-    #         node_name = self.base_dag.nodes()[ln_parent]['attr'].name
-    #         self.base_model = widen_parent_ln(
-    #             self.base_model, node_name
-    #         )
-    #     return parents
+    def is_converging(self):
+        return self.models[-1].is_converging
 
-    # def deepen_base_layer(self, node_id):
-    #     node = self.base_dag.nodes()[node_id]['attr']
-    #     if node.operator == 'Conv':
-    #         self.base_model = deepen(
-    #             self.base_model, node.name
-    #         )
-    
-    # def tiny_model_scale(self, layers: List[str]):
-    #     widen_layers = []
-    #     deepen_layers = []
-    #     for layer in layers:
-    #         if layer in self.last_scaled_layer:
-    #             deepen_layers.append(layer)
-    #             self.last_scaled_layer.remove(layer)
-    #         else:
-    #             widen_layers.append(layer)
-    #             self.last_scaled_layer.add(layer)
-    #     for layer in widen_layers:
-    #         logging.info(f'widenning layer {layer}')
-    #         node_id = self.layername2id[layer]
-    #         self.widen_base_layer(node_id)
-    #     for layer in deepen_layers:
-    #         logging.info(f"deepening layer {layer}")
-    #         node_id = self.layername2id[layer]
-    #         self.deepen_base_layer(node_id)
-    #     logging.info(self.base_model)
-    #     return self.base_model
-    
-    # def base_model_scale(self, alpha: float=1.32, beta: float=1.21):
-    #     """
-    #     EfficientNet style model scaling
-    #     d = alpha^phi
-    #     w = beta^phi
-    #     scale the base model to num super models
-    #     """
-    #     layers = self.get_weighted_layers()
-    #     random.shuffle(layers)
-    #     for candidate_id in range(len(self.candidate_models)):
-    #         # widen
-    #         widen_p = alpha - 1
-    #         widen_num = 0
-    #         widened_layers = []
-    #         for node_id, _ in layers:
-    #             dice = random.uniform(0,1)
-    #             if dice < widen_p:
-    #                 widened_layers += self.widen_layer(candidate_id, node_id)
-    #                 widen_num += len(widened_layers)
-    #             if widen_num > widen_p * len(layers):
-    #                 break
-    #         # deepen
-    #         deepen_p = beta - 1
-    #         deepened_layers = []
-    #         for node_id, _ in layers:
-    #             dice = random.uniform(0,1)
-    #             if dice < deepen_p:
-    #                 self.deepen_layer(candidate_id, node_id)
-    #                 deepened_layers.append(node_id)
-    #         self.record_trajectary(candidate_id, widened_layers, deepened_layers)
+    def reset_model_in_update(self):
+        for super_model in self.models:
+            if super_model:
+                super_model.reset_model_in_update()
 
-    # def base_model_scale_fix(self, layers):
-    #     assert(len(layers) == len(self.candidate_models))
-    #     for candidate_id in range(len(self.candidate_models)):
-    #         deepened_layers = []
-    #         widened_layers = []
-    #         for layer in layers[candidate_id]:
-    #             node_id = self.layername2id[layer]
-    #             widened_layers += self.widen_layer(candidate_id, node_id)
-    #         for layer in layers[candidate_id]:
-    #             node_id = self.layername2id[layer]
-    #             self.deepen_layer(candidate_id, node_id)
-    #             deepened_layers.append(node_id)
-    #         self.record_trajectary(candidate_id, widened_layers, [node_id])
-    
-    # def get_candidate_distance(self, candidate_i, candidate_j):
-    #     """
-    #     calculate the model distance based on widen and deepen trajectary
-    #     distance <- [0, +inf]
-    #     """
-    #     widen_i = self.widen_trajectary[candidate_i]
-    #     deepen_i = self.deepen_trajectary[candidate_i]
-    #     widen_j = self.widen_trajectary[candidate_j]
-    #     deepen_j = self.deepen_trajectary[candidate_j]
-    #     return np.linalg.norm(widen_i - widen_j) + np.linalg.norm(deepen_i - deepen_j)
-    
-    # def get_candidate_similarity(self, candidate_i, candidate_j):
-    #     """
-    #     calculate the similarity of two models based on model distance:
-    #     similarity = 2 - 2 * sigmoid(distance)
-    #     similarity <- [0,1]
-    #     """
-    #     distance = self.get_candidate_distance(candidate_i, candidate_j)
-    #     return 2.0 - 2.0 / (1.0 + math.exp(-distance))
+    def assign_tasks(self, clients_to_run):
+        assignment = {}
+        model_training = []
+        for Id, super_model in enumerate(self.models):
+            if super_model:
+                super_model.assign_task(len(clients_to_run))
+                for client in clients_to_run:
+                    assignment[client] = Id
+                model_training.append(Id)
+        return assignment, model_training
 
-    # def reset_base(self, candidate_id, candidate_capacity: int=5):
-    #     self.base_model = deepcopy(self.candidate_models[candidate_id])
-    #     self.candidate_models = [deepcopy(self.base_model) for _ in range(candidate_capacity)]
-    #     self.base_graph = []
-    #     self.widen_trajectary = []
-    #     self.deepen_trajectary = []
-    #     self.base_dag = None
-    #     self.candidate_dags = []
-    #     self.name2id = {} 
-    #     self.translate_base_model()
+    def get_all_models(self):
+        models = []
+        for super_model in self.models:
+            if super_model:
+                models.append(super_model.torch_model)
+            else:
+                models.append(None)
+        return models
 
     def aggregate_weights(self, weights_param, comming_weights_param, model_id, comming_model_id, device, is_init: bool=False):
         """
