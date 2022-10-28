@@ -70,7 +70,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.sampled_executors = []
 
         self.round_stragglers = []
-        self.model_update_size = []
+        # self.model_update_size = []
 
         self.collate_fn = None
         self.task = args.task
@@ -103,9 +103,10 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.model_in_training = []
         self.mapped_models = {}
         self.test_model_id = 0
-        self.test_result_accumulator = [[] for _ in range(0, len(self.model))]
+        # self.test_result_accumulator = [[] for _ in range(0, len(self.model))]
+        self.test_result_accumulator = [[]]
         self.tasks_round = 0
-        self.weight_coeff = [[] for _ in range(0, len(self.model))]
+        # self.weight_coeff = [[] for _ in range(0, len(self.model))]
 
         # ======== Task specific ============
         self.init_task_context()
@@ -188,7 +189,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         else:
             model = init_model()
 
-        self.model_manager = Model_Manager(model)
+        self.model_manager = Model_Manager(model, self.args)
         # self.model_manager.translate_base_model()
         # self.model = [self.model_manager.get_latest_model()]
 
@@ -275,7 +276,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             # need to register different duration for different rounds
             # So oort is invalidated? So we need to use random method instead
             self.client_manager.registerDuration(clientId, batch_size=self.args.batch_size,
-                                                 upload_step=self.args.local_steps, upload_size=sum(self.model_update_size), download_size=sum(self.model_update_size))
+                                                 upload_step=self.args.local_steps, upload_size=self.model_manager.get_model_update_size_all(), download_size=self.model_manager.get_model_update_size_all())
             self.num_of_clients += 1
 
 
@@ -373,7 +374,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 model_id = 0 # reduce to one model running
                 exe_cost = self.client_manager.getCompletionTime(client_to_run,
                                                                  batch_size=client_cfg.batch_size, upload_step=client_cfg.local_steps,
-                                                                 upload_size=self.model_update_size[model_id], download_size=self.model_update_size[model_id])
+                                                                 upload_size=self.model_manager.get_model_update_size(model_id), download_size=self.model_manager.get_model_update_size(model_id))
+                                                                #  upload_size=self.model_update_size[model_id], download_size=self.model_update_size[model_id])
 
                 roundDuration = exe_cost['computation'] + \
                     exe_cost['communication']
@@ -598,7 +600,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.model_manager.save_last_param()
 
     # def round_weight_handler(self, last_model):
-    def round_weight_handler(self)
+    def round_weight_handler(self):
         """Update model when the round completes
         
         Args:
@@ -739,7 +741,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # for client_id in clientsToRun:
         #     self.tasks_round[self.mapped_models[client_id]] += 1
         self.mapped_models, self.model_in_training = self.model_manager.assign_tasks(clientsToRun)
-        logging.info(f"model(s) {model_training} will be trained in the next round")
+        logging.info(f"model(s) {self.model_in_training} will be trained in the next round")
         logging.info(f"model assignment: {self.mapped_models}")
         self.tasks_round = len(clientsToRun)
 
@@ -759,7 +761,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # self.model_in_update = [0 for _ in range(0, len(self.model))]
         self.model_manager.reset_model_in_update()
 
-        self.test_result_accumulator = [[] for _ in model_training]
+        self.test_result_accumulator = [[] for _ in self.model_in_training]
         self.stats_util_accumulator = []
         self.client_training_results = []
 
@@ -877,8 +879,9 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             if len(self.loss_accumulator):
                 self.log_test_result()
 
-            self.test_model_id = (self.test_model_id + 1) % len(self.model_in_training)
-            self.broadcast_events_queue.append(commons.START_ROUND if self.test_model_id == 0 else commons.MODEL_TEST)
+            # self.test_model_id = (self.test_model_id + 1) % len(self.model_in_training)
+            # self.broadcast_events_queue.append(commons.START_ROUND if self.test_model_id == 0 else commons.MODEL_TEST)
+            self.broadcast_events_queue.append(commons.START_ROUND)
 
     def broadcast_aggregator_events(self, event):
         """Issue tasks (events) to aggregator worker processes by adding grpc request event
@@ -948,7 +951,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
     def get_test_config(self, client_id):
         """FL model testing on clients"""
 
-        return {'client_id': client_id}, self.test_model_id
+        # return {'client_id': client_id}, self.test_model_id
+        return {'client_id': client_id}, self.model_in_training[0]
 
     def get_global_model(self):
         """Get global model that would be used by all FL clients (in default FL)

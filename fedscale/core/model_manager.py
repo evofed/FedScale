@@ -192,16 +192,16 @@ class Super_Model():
                 self.model_grads_buffer[l][-1] += results['grad_dict'][l]
             if len(self.model_grads_buffer[l]) > self.args.gradient_buffer_length:
                 self.model_grads_buffer[l].pop(0)
-        if self.model_in_update == self.tasks_round:
+        if self.model_in_update == self.task_round:
             for p in self.model_weights:
                 d_type = self.model_weights[p].data.dtype
                 self.model_weights[p].data = (
-                        self.model_weights[p] / float(self.tasks_round)).to(dtype=d_type)
+                        self.model_weights[p] / float(self.task_round)).to(dtype=d_type)
             for l in self.model_grads_buffer:
                 self.model_grads_buffer[l][-1] = (
-                        self.model_grads_buffer[l][-1] / float(self.tasks_round))
-            self.curr_model_loss = self.curr_model_loss / self.tasks_round
-            self.train_loss_buffer.append(self.curr_model_loss / self.tasks_round)
+                        self.model_grads_buffer[l][-1] / float(self.task_round))
+            self.curr_loss = self.curr_loss / self.task_round
+            self.train_loss_buffer.append(self.curr_loss)
             self.check_convergence()
             logging.info(f'(DEBUG) gradient buffer of model {self.rank}: {self.model_grads_buffer}')
 
@@ -386,9 +386,10 @@ class Super_Model():
             new_model = deepen(
                 new_model, node.name
             )
+        return new_model
 
     def select_layers_by_gradient(self):
-        model_grad_rank = [[l, avg(self.model_grads_buffer[l])] for l in self.model_grads_buffer]
+        model_grad_rank = [[l, sum(self.model_grads_buffer[l]) / float(len(self.model_grads_buffer[l]))] for l in self.model_grads_buffer]
         model_grad_rank.sort(key=lambda l: l[1])
         max_grad = model_grad_rank[-1][1]
         selected_layers = []
@@ -427,11 +428,11 @@ class Super_Model():
 class Model_Manager():
     def __init__(self, init_model, args) -> None:
         self.models = []
-        self.add_model(init_model)
         self.args = args
+        self.add_model(init_model)
 
     def add_model(self, torch_model):
-        self.models.append(Super_Model(torch_model), self.args, len(self.models))
+        self.models.append(Super_Model(torch_model, self.args, len(self.models), set()))
 
     def get_latest_model(self):
         return self.models[-1].torch_model
@@ -445,6 +446,7 @@ class Model_Manager():
         layers = self.models[-1].select_layers_by_gradient()
         new_model, last_scaled_layer = self.models[-1].model_scale(layers)
         # drop the last model
+        # TODO: do not drop the last model
         self.models[-1] = None
         self.models.append(Super_Model(new_model, self.args, len(self.models), last_scaled_layer))
         return self.models[-1].torch_model
@@ -488,7 +490,7 @@ class Model_Manager():
                 super_model.save_model()
 
     def is_converging(self):
-        return self.models[-1].is_converging
+        return self.models[-1].is_converging()
 
     def reset_model_in_update(self):
         for super_model in self.models:
@@ -514,6 +516,19 @@ class Model_Manager():
             else:
                 models.append(None)
         return models
+    
+    def get_model_update_size(self, Id):
+        if self.models[Id]:
+            return self.models[Id].model_update_size
+        else:
+            return self.models[-1].model_update_size
+    
+    def get_model_update_size_all(self):
+        size = .0
+        for super_model in self.models:
+            if super_model:
+                size += super_model.model_update_size
+        return size
 
     def aggregate_weights(self, weights_param, comming_weights_param, model_id, comming_model_id, device, is_init: bool=False):
         """
