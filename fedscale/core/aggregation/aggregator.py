@@ -231,7 +231,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             with open(device_info_file_path, 'rb') as fin:
                 # {clientId: [computer, bandwidth]}
                 global_client_profile = pickle.load(fin)
-        print(global_client_profile)
         if os.path.exists(device_cap_file_path):
             cap = {}
             with open(device_cap_file_path) as fin:
