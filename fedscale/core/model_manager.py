@@ -1,8 +1,6 @@
 from audioop import avg
 import logging
 import os
-from pydoc import cli
-from select import select
 import sys
 from typing import List, Set
 import torch
@@ -10,10 +8,7 @@ import networkx, onnx
 from onnx.helper import printable_graph
 from collections import defaultdict
 from fedscale.core.net2netlib import *
-from copy import copy, deepcopy
-import random
-import numpy as np
-import math
+from copy import deepcopy
 from thop import profile
 import torch
 from fedscale.core.logger.aggragation import logDir
