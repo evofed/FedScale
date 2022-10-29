@@ -37,7 +37,7 @@ from fedscale.utils.model_test_module import test_model
 # FedScale model libs
 from fedscale.utils.models.model_provider import get_cv_model
 
-import fedscale.core.nasbench as nasbench
+import fedscale.utils.models.evofed.nasbench as nasbench
 
 
 tokenizer = None
