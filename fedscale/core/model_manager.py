@@ -438,7 +438,7 @@ class Model_Manager():
         for model in self.models:
             models.append(model.torch_model)
     
-    def model_scale(self):
+    def model_scale_single(self):
         layers = self.models[-1].select_layers_by_gradient()
         new_model, last_scaled_layer = self.models[-1].model_scale(layers)
         # drop the last model

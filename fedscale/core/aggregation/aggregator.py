@@ -458,7 +458,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
     def transform_model(self):
         self.save_model()
-        self.model_manager.model_scale()
+        self.model_manager.model_scale_single()
 
     def round_completion_handler(self):
         """Triggered upon the round completion, it registers the last round execution info,
