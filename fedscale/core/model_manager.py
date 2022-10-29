@@ -133,7 +133,7 @@ def translate_model(model):
     return dag, name2id, layername2id
 dummy_input = torch.randn(10, 3, 224, 224)
 dataset_input = {
-    'femnist': torch.randn(1, 3, 28, 28)
+    'femnist': torch.randn(1, 3, 28, 28),
     'openImg': torch.randn(1, 3, 256, 256),
     'speech': torch.randn(32, 32)
 }
@@ -530,7 +530,7 @@ class Model_Manager():
             if super_model:
                 macs.append(super_model.macs)
     
-    def assign_tasks(self, clients_to_run, clients_cap)
+    def assign_tasks(self, clients_to_run, clients_cap):
         assignment = {}
         model_training = set()
         for client in clients_to_run:

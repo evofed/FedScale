@@ -231,15 +231,16 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             with open(device_info_file_path, 'rb') as fin:
                 # {clientId: [computer, bandwidth]}
                 global_client_profile = pickle.load(fin)
+        print(global_client_profile)
         if os.path.exists(device_cap_file_path):
             cap = {}
             with open(device_cap_file_path) as fin:
                 reader = csv.reader(fin)
                 _ = next(reader)
                 for row in reader:
-                    cap[int(row[0])] = row[1]
+                    cap[int(row[0])] = float(row[1])
         for clientId in global_client_profile:
-            global_client_profile[clientId].append(cap[int(clientId)])
+            global_client_profile[clientId]['macs'] = cap[int(clientId)-1]
         return global_client_profile
 
     def client_register_handler(self, executorId, info):
@@ -256,7 +257,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             mapped_id = (self.num_of_clients+1) % len(
                 self.client_profiles) if len(self.client_profiles) > 0 else 1
             systemProfile = self.client_profiles.get(
-                mapped_id, {'computation': 1.0, 'communication': 1.0, 'macs': 1000000000.0}),
+                mapped_id, {'computation': 1.0, 'communication': 1.0, 'macs': 1000000000.0})
 
             clientId = (
                 self.num_of_clients+1) if self.experiment_mode == commons.SIMULATION_MODE else executorId
@@ -333,7 +334,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                                                                  upload_size=self.model_manager.get_model_update_size(model_id), download_size=self.model_manager.get_model_update_size(model_id))
                                                                 #  upload_size=self.model_update_size[model_id], download_size=self.model_update_size[model_id])
 
-                cap = self.client_manager.getCompletionTime(client_to_run)
+                cap = self.client_manager.get_capacity(client_to_run)
                 roundDuration = exe_cost['computation'] + \
                     exe_cost['communication']
                 # if the client is not active by the time of collection, we consider it is lost in this round
