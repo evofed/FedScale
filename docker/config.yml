@@ -37,6 +37,7 @@ job_conf:
     - data_map_file: $FEDSCALE_HOME/benchmark/dataset/data/femnist/client_data_mapping/train.csv              # Allocation of data to each client, turn to iid setting if not provided
     - device_conf_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_device_capacity     # Path of the client trace
     - device_avail_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_behave_trace
+    - device_cap_file: $FEDSCALE_HOME/benchmark/device_cap/femnist/resnet18-uniform.csv
     - model: nasbench201_0                            # Models: e.g., shufflenet_v2_x2_0, mobilenet_v2, resnet34, albert-base-v2
     - model_name: None
     - gradient_policy: fed-avg                 # {"fed-yogi", "fed-prox", "fed-avg"}, "fed-avg" by default
@@ -58,6 +59,6 @@ job_conf:
     - nas: True
     # - mode: from_scratch # from_one, from_multiple
     - selected_ratio: 0.9
-    - converge_M: 100
-    - converge_N: 10
+    - step_M: 100
+    - window_N: 10
     # - selected_layers: cells.1.downsample.1.0.0,cells.1.downsample.1.2.0
