@@ -228,6 +228,7 @@ parser.add_argument('--selected_layers', default="", type=str, help='selected la
 parser.add_argument('--model_name', default='None', type=str, help='name of the model checkpoint file')
 parser.add_argument('--window_N', default='10', type=int)
 parser.add_argument('--step_M', default='100', type=int)
+parser.add_argument('--device_cap_file', type=str)
 
 args, unknown = parser.parse_known_args()
 args.use_cuda = eval(args.use_cuda)

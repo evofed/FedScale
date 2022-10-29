@@ -17,7 +17,7 @@ import pickle
 omit_operator = ['Identity', 'Constant']
 conflict_operator = ['Add']
 weight_operator = ['Conv', 'Gemm']
-dummy_input = torch.randn(10, 3, 224, 224)
+
 
 class Widen_Operator():
     def __init__(self, ratio: float) -> None:
@@ -131,6 +131,12 @@ def translate_model(model):
             layername2id[dag.nodes()[node_id]['attr'].name] = node_id
     
     return dag, name2id, layername2id
+dummy_input = torch.randn(10, 3, 224, 224)
+dataset_input = {
+    'femnist': torch.randn(1, 3, 28, 28)
+    'openImg': torch.randn(1, 3, 256, 256),
+    'speech': torch.randn(32, 32)
+}
 
 class Super_Model():
     def __init__(self, torch_model, args, rank, last_scaled_layer: Set=set()) -> None:
@@ -138,7 +144,7 @@ class Super_Model():
         self.dag, self.name2id, self.layername2id = \
             translate_model(torch_model)
         
-        self.macs, self.params = profile(self.torch_model, inputs=(dummy_input,), verbose=False)
+        self.macs, self.params = profile(self.torch_model, inputs=(dataset_input[args.data_set],), verbose=False)
         self.last_scaled_layer = last_scaled_layer
         self.curr_loss = 0
         self.converged = False
@@ -170,6 +176,9 @@ class Super_Model():
 
     def assign_task(self, task):
         self.task_round = task
+
+    def assign_one_task(self):
+        self.task_round += 1
 
     def normal_weight_aggregation(self, results):
         self.curr_loss += results['moving_loss']
@@ -213,6 +222,9 @@ class Super_Model():
                 self.converging = 1
             if slope < self.args.convergent_threshold:
                 self.converged = 1
+
+    def terminate(self):
+        self.save_model()
 
     def save_last_param(self):
         self.last_gradient_weights = [
@@ -447,6 +459,11 @@ class Model_Manager():
         self.models.append(Super_Model(new_model, self.args, len(self.models), last_scaled_layer))
         return self.models[-1].torch_model
     
+    def model_scale(self):
+        layers = self.models[-1].select_layers_by_graeidnt()
+        new_model, last_scaled_layer = self.models[-1].model_scale(layers)
+        self.models.append(Super_Model(new_model, self.args, len(self.models), last_scaled_layer))
+    
     def get_candidate_layers(self, model_id):
         assert self.models[model_id] != None
         return self.models[model_id].get_weighted_layers()
@@ -467,6 +484,9 @@ class Model_Manager():
     def weight_aggregation(self, results, model_id, soft: bool=False):
         if not soft:
             self.models[model_id].normal_weight_aggregation(results)
+            if self.models[model_id].converged:
+                self.models[model_id].terminate()
+                self.models[model_id] = None
         else:
             raise NotImplementedError('not implemented soft aggregation')
 
@@ -493,7 +513,7 @@ class Model_Manager():
             if super_model:
                 super_model.reset_model_in_update()
 
-    def assign_tasks(self, clients_to_run):
+    def assign_tasks_naive(self, clients_to_run):
         assignment = {}
         model_training = []
         for Id, super_model in enumerate(self.models):
@@ -503,6 +523,25 @@ class Model_Manager():
                     assignment[client] = Id
                 model_training.append(Id)
         return assignment, model_training
+
+    def get_all_macs(self):
+        macs = []
+        for super_model in self.models:
+            if super_model:
+                macs.append(super_model.macs)
+    
+    def assign_tasks(self, clients_to_run, clients_cap)
+        assignment = {}
+        model_training = set()
+        for client in clients_to_run:
+            for Id, super_model in enumerate(reversed(self.models)):
+                if super_model.macs <= clients_cap[Id]:
+                    super_model.assign_one_task()
+                    assignment[client] = Id
+                    model_training.add(Id)
+        logging.info(f"MACs of outstanding models {self.get_all_macs}")
+        logging.info(f"MACs of selected clients {clients_cap}")
+        return assignment, model_training 
 
     def get_all_models(self):
         models = []

@@ -14,6 +14,7 @@ from concurrent import futures
 
 import grpc
 import torch
+import csv
 from torch.utils.tensorboard import SummaryWriter
 
 import fedscale.core.channels.job_api_pb2_grpc as job_api_pb2_grpc
@@ -215,7 +216,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         return client_manager
 
-    def load_client_profile(self, file_path):
+    def load_client_profile(self, device_info_file_path, device_cap_file_path):
         """For Simulation Mode: load client profiles/traces
 
         Args:
@@ -226,11 +227,19 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         """
         global_client_profile = {}
-        if os.path.exists(file_path):
-            with open(file_path, 'rb') as fin:
+        if os.path.exists(device_info_file_path):
+            with open(device_info_file_path, 'rb') as fin:
                 # {clientId: [computer, bandwidth]}
                 global_client_profile = pickle.load(fin)
-
+        if os.path.exists(device_cap_file_path):
+            cap = {}
+            with open(device_cap_file_path) as fin:
+                reader = csv.reader(fin)
+                _ = next(reader)
+                for row in reader:
+                    cap[int(row[0])] = row[1]
+        for clientId in global_client_profile:
+            global_client_profile[clientId].append(cap[int(clientId)])
         return global_client_profile
 
     def client_register_handler(self, executorId, info):
@@ -247,7 +256,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             mapped_id = (self.num_of_clients+1) % len(
                 self.client_profiles) if len(self.client_profiles) > 0 else 1
             systemProfile = self.client_profiles.get(
-                mapped_id, {'computation': 1.0, 'communication': 1.0})
+                mapped_id, {'computation': 1.0, 'communication': 1.0, 'macs': 1000000000.0}),
 
             clientId = (
                 self.num_of_clients+1) if self.experiment_mode == commons.SIMULATION_MODE else executorId
@@ -313,6 +322,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             sampledClientsReal = []
             completionTimes = []
             completed_client_clock = {}
+            clients_cap = {}
 
             # 1. remove dummy clients that are not available to the end of training
             for client_to_run in sampled_clients:
@@ -323,6 +333,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                                                                  upload_size=self.model_manager.get_model_update_size(model_id), download_size=self.model_manager.get_model_update_size(model_id))
                                                                 #  upload_size=self.model_update_size[model_id], download_size=self.model_update_size[model_id])
 
+                cap = self.client_manager.getCompletionTime(client_to_run)
                 roundDuration = exe_cost['computation'] + \
                     exe_cost['communication']
                 # if the client is not active by the time of collection, we consider it is lost in this round
@@ -330,6 +341,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                     sampledClientsReal.append(client_to_run)
                     completionTimes.append(roundDuration)
                     completed_client_clock[client_to_run] = exe_cost
+                    clients_cap[client_to_run] = cap
 
             num_clients_to_collect = min(
                 num_clients_to_collect, len(completionTimes))
@@ -346,7 +358,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
             return (clients_to_run, dummy_clients,
                     completed_client_clock, round_duration,
-                    completionTimes[:num_clients_to_collect])
+                    completionTimes[:num_clients_to_collect], clients_cap)
         else:
             completed_client_clock = {
                 client: {'computation': 1, 'communication': 1} for client in sampled_clients}
@@ -365,7 +377,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.init_model()
         self.save_last_param()
 
-        self.client_profiles = self.load_client_profile(file_path=self.args.device_conf_file)
+        self.client_profiles = self.load_client_profile(device_info_file_path=self.args.device_conf_file, device_cap_file_path=self.args.device_cap_file)
 
         self.event_monitor()
 
@@ -458,7 +470,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
     def transform_model(self):
         self.save_model()
-        self.model_manager.model_scale_single()
+        # self.model_manager.model_scale_single()
+        self.model_manager.model_scale()
 
     def round_completion_handler(self):
         """Triggered upon the round completion, it registers the last round execution info,
@@ -500,13 +513,13 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # update select participants
         self.sampled_participants = self.select_participants(
             select_num_participants=self.args.num_participants, overcommitment=self.args.overcommitment)
-        (clientsToRun, round_stragglers, virtual_client_clock, round_duration, flatten_client_duration) = self.tictak_client_tasks(
+        (clientsToRun, round_stragglers, virtual_client_clock, round_duration, flatten_client_duration, clients_cap) = self.tictak_client_tasks(
             self.sampled_participants, self.args.num_participants)
 
         logging.info(f"Selected participants to run: {clientsToRun}")
         # Issue requests to the resource manager; Tasks ordered by the completion time
         self.resource_manager.register_tasks(clientsToRun)
-        self.mapped_models, self.model_in_training = self.model_manager.assign_tasks(clientsToRun)
+        self.mapped_models, self.model_in_training = self.model_manager.assign_tasks(clientsToRun, clients_cap)
         logging.info(f"model(s) {self.model_in_training} will be trained in the next round")
         logging.info(f"model assignment: {self.mapped_models}")
         self.tasks_round = len(clientsToRun)

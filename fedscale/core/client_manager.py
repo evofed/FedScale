@@ -51,7 +51,7 @@ class clientManager(object):
             hostId (int): executor Id.
             clientId (int): client Id.
             size (int): number of samples on this client.
-            speed (Dict[str, float]): device speed (e.g., compuutation and communication).
+            speed (Dict[str, float]): device speed (e.g., compuutation, communication, and macs).
             duration (float): execution latency.
 
         """
@@ -97,6 +97,9 @@ class clientManager(object):
             batch_size=batch_size, upload_step=upload_step,
             upload_size=upload_size, download_size=download_size
         )
+    
+    def get_capacity(self, clientId):
+        return self.Clients[self.getUniqueId(0, clientId)].get_capacity()
 
     def registerSpeed(self, hostId, clientId, speed):
         uniqueId = self.getUniqueId(hostId, clientId)

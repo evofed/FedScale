@@ -6,9 +6,13 @@ class Client(object):
         self.clientId = clientId
         self.compute_speed = speed['computation']
         self.bandwidth = speed['communication']
+        self.macs = speed['macs']
         self.score = 0
         self.traces = traces
         self.behavior_index = 0
+
+    def get_capacity(self):
+        return self.macs
 
     def getScore(self):
         return self.score
