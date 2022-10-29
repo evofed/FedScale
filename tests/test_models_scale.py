@@ -1,5 +1,5 @@
 from torchvision import models
-from fedscale.core.model_manager import Super_Model
+from fedscale.core.model_manager import SuperModel
 import torch
 
 def dry_forward(torch_model, fake_input):
@@ -23,7 +23,7 @@ model_zoo = {
 for model in model_zoo.keys():
     print(f'testing {model}')
     # print(model_zoo[model])
-    super_model = Super_Model(model_zoo[model])
+    super_model = SuperModel(model_zoo[model])
     layers = super_model.get_weighted_layers()
     layers = [l[1] for l in layers][2:4]
     print(f"widening {layers}")

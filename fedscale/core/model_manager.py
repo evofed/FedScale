@@ -1,9 +1,7 @@
-from audioop import avg
 import logging
 import os
 import sys
 from typing import List, Set
-import torch
 import networkx, onnx
 from onnx.helper import printable_graph
 from collections import defaultdict
@@ -13,6 +11,7 @@ from thop import profile
 import torch
 from fedscale.core.logger.aggragation import logDir
 import pickle
+from dataclasses import dataclass
 
 omit_operator = ['Identity', 'Constant']
 conflict_operator = ['Add']
@@ -138,14 +137,21 @@ dataset_input = {
     'speech': torch.randn(32, 32)
 }
 
-class Super_Model():
-    def __init__(self, torch_model, args, rank, last_scaled_layer: Set=set()) -> None:
+@dataclass
+class ClientRecord:
+    training_loss: List[float]
+
+class SuperModel:
+    def __init__(self, torch_model, args, rank, last_scaled_layer: Set=None) -> None:
         self.torch_model = torch_model
         self.dag, self.name2id, self.layername2id = \
             translate_model(torch_model)
         
         self.macs, self.params = profile(self.torch_model, inputs=(dataset_input[args.data_set],), verbose=False)
-        self.last_scaled_layer = last_scaled_layer
+        if last_scaled_layer is None:
+            self.last_scaled_layer = set()
+        else:
+            self.last_scaled_layer = last_scaled_layer
         self.curr_loss = 0
         self.converged = False
         self.converging = False
@@ -158,11 +164,12 @@ class Super_Model():
         self.rank = rank
         self.last_gradient_weights = []
         self.model_update_size = sys.getsizeof(pickle.dumps(torch_model)) // 1024.0 * 8.0
+        self.client_records = defaultdict(ClientRecord)
 
     def is_converging(self):
         return self.converging
 
-    def is_coverged(self):
+    def is_converged(self):
         return self.converged
     
     def set_cur_loss(self, loss):
@@ -182,6 +189,7 @@ class Super_Model():
 
     def normal_weight_aggregation(self, results):
         self.curr_loss += results['moving_loss']
+        self.client_records[results['clientId']].training_loss.append(results['moving_loss'])
         self.model_in_update += 1
         for p in results['update_weight']:
             if self.model_in_update == 1:
@@ -219,9 +227,9 @@ class Super_Model():
             slope /= self.args.window_N
             logging.info(f'current accumulative training loss slope of model {self.rank}: {slope}')
             if slope < self.args.transform_threshold:
-                self.converging = 1
+                self.converging = True
             if slope < self.args.convergent_threshold:
-                self.converged = 1
+                self.converged = True
 
     def terminate(self):
         self.save_model()
@@ -310,26 +318,6 @@ class Super_Model():
             else:
                 child_convs.add(child)
         return list(child_convs), list(parent_convs), list(bns), list(child_lns), list(parent_lns)
-
-    def get_deepen_instruction(self, query_node_id):
-        out_channel, in_channel = None, None
-
-        # get out_channels
-        child = self.get_children(query_node_id)[0]
-        child_node = self.dag.nodes()[child]['attr']
-        if child_node.operator == 'BatchNormalization':
-            bn = get_model_layer(self.base_model, child_node.name)
-            out_channel = bn.num_features
-        else:
-            conv = get_model_layer(self.base_model, child_node.name)
-            out_channel = conv.in_channels
-        
-        # get out_channels
-        parent_node = self.dag.nodes()[parent_node]['attr']
-        conv = get_model_layer(self.base_model, parent_node.name)
-        in_channel = conv.out_channels
-
-        return in_channel, out_channel
     
     def is_conflict(self, query_node_id):
         conflict_id = -1
@@ -379,10 +367,9 @@ class Super_Model():
                 new_model, node_name)
         for ln_child in ln_children:
             node_name = self.dag.nodes()[ln_child]['attr'].name
-            new_modell = widen_child_ln(
+            new_model = widen_child_ln(
                 new_model, node_name)
         for ln_parent in ln_parents:
-            node_name = self.dag.nodes()[ln_child]['attr'].name
             node_name = self.dag.nodes()[ln_parent]['attr'].name
             new_model = widen_parent_ln(
                 new_model, node_name)
@@ -440,7 +427,7 @@ class Model_Manager():
         self.add_model(init_model)
 
     def add_model(self, torch_model):
-        self.models.append(Super_Model(torch_model, self.args, len(self.models), set()))
+        self.models.append(SuperModel(torch_model, self.args, len(self.models), set()))
 
     def get_latest_model(self):
         return self.models[-1].torch_model
@@ -456,13 +443,13 @@ class Model_Manager():
         # drop the last model
         # TODO: do not drop the last model
         self.models[-1] = None
-        self.models.append(Super_Model(new_model, self.args, len(self.models), last_scaled_layer))
+        self.models.append(SuperModel(new_model, self.args, len(self.models), last_scaled_layer))
         return self.models[-1].torch_model
     
     def model_scale(self):
         layers = self.models[-1].select_layers_by_graeidnt()
         new_model, last_scaled_layer = self.models[-1].model_scale(layers)
-        self.models.append(Super_Model(new_model, self.args, len(self.models), last_scaled_layer))
+        self.models.append(SuperModel(new_model, self.args, len(self.models), last_scaled_layer))
     
     def get_candidate_layers(self, model_id):
         assert self.models[model_id] != None
@@ -551,6 +538,13 @@ class Model_Manager():
             else:
                 models.append(None)
         return models
+
+    def get_active_model_ids(self):
+        active_model_ids = []
+        for i, super_model in enumerate(self.models):
+            if super_model:
+                active_model_ids.append(i)
+        return active_model_ids
     
     def get_model_update_size(self, Id):
         if self.models[Id]:

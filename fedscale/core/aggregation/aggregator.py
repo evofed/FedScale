@@ -1,19 +1,10 @@
 # -*- coding: utf-8 -*-
 
 from collections import defaultdict
-from fedscale.core.logger.aggragation import *
-from fedscale.core.resource_manager import ResourceManager
-from fedscale.core import commons
-from fedscale.core.channels import job_api_pb2
-import fedscale.core.channels.job_api_pb2_grpc as job_api_pb2_grpc
 from fedscale.core.model_manager import Model_Manager
-from random import Random
-import pickle
-import threading
 from concurrent import futures
 
 import grpc
-import torch
 import csv
 from torch.utils.tensorboard import SummaryWriter
 
@@ -104,6 +95,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.model_grads_buffer = defaultdict(lambda: defaultdict(list))
         self.scaled_id = 0
         self.train_loss_buffer = []
+        self.model_to_test = []
 
     def __init__(self, args):
         logging.info(f"Job args {args}")
@@ -220,19 +212,20 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         """For Simulation Mode: load client profiles/traces
 
         Args:
-            file_path (string): File path for the client profiles/traces
+            device_info_file_path (string): File path for the client profiles/traces
+            device_cap_file_path (string): File path for the client capacity
 
         Returns:
             dictionary: Return the client profiles/traces
 
         """
         global_client_profile = {}
+        cap = {}
         if os.path.exists(device_info_file_path):
             with open(device_info_file_path, 'rb') as fin:
                 # {clientId: [computer, bandwidth]}
                 global_client_profile = pickle.load(fin)
         if os.path.exists(device_cap_file_path):
-            cap = {}
             with open(device_cap_file_path) as fin:
                 reader = csv.reader(fin)
                 _ = next(reader)
@@ -457,10 +450,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
     # def round_weight_handler(self, last_model):
     def round_weight_handler(self):
         """Update model when the round completes
-        
-        Args:
-            last_model (list): A list of global model weight in last round.
-        
         """
         if self.round > 1:
             self.model_manager.load_model_weight(self.optimizer)
@@ -547,6 +536,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             self.broadcast_aggregator_events(commons.SHUT_DOWN)
         elif self.round % self.args.eval_interval == 0 or self.round == 1:
             self.model_manager.save_models()
+            self.model_to_test = self.model_manager.get_active_model_ids()
             self.broadcast_aggregator_events(commons.UPDATE_MODEL)
             self.broadcast_aggregator_events(commons.MODEL_TEST)
         else:
@@ -603,18 +593,19 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         """Each executor will handle a subset of testing dataset
         
         Args:
-            client_id (int): The client id.
             results (dictionary): The client test results.
 
         """
 
         results = results['results']
+        assert results['model_id'] == self.model_to_test[0]
 
         # List append is thread-safe
         self.test_result_accumulator[self.test_model_id].append(results)
 
         # Have collected all testing results
         if len(self.test_result_accumulator[self.test_model_id]) == len(self.executors):
+            self.model_to_test.pop(0)
             accumulator = self.test_result_accumulator[self.test_model_id][0]
             for i in range(1, len(self.test_result_accumulator[self.test_model_id])):
                 if self.args.task == "detection":
@@ -657,7 +648,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             if len(self.loss_accumulator):
                 self.log_test_result()
 
-            self.broadcast_events_queue.append(commons.START_ROUND)
+            self.broadcast_events_queue.append(commons.START_ROUND if len(self.model_to_test) == 0 else commons.MODEL_TEST)
 
     def broadcast_aggregator_events(self, event):
         """Issue tasks (events) to aggregator worker processes by adding grpc request event
@@ -726,7 +717,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
     def get_test_config(self, client_id):
         """FL model testing on clients"""
 
-        return {'client_id': client_id}, self.model_in_training[0]
+        return {'client_id': client_id}, self.model_to_test[0]
 
     def get_global_model(self):
         """Get global model that would be used by all FL clients (in default FL)

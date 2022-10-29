@@ -205,7 +205,7 @@ class Executor(object):
         """Model Testing. By default, we test the accuracy on all data of clients in the test group"""
 
         test_res = self.testing_handler(args=self.args, model_id=config['model_id'])
-        test_res = {'executorId': self.this_rank, 'results': test_res}
+        test_res = {'executorId': self.this_rank, 'results': test_res, 'model_id': config['model_id']}
 
         # Report execution completion information
         response = self.aggregator_communicator.stub.CLIENT_EXECUTE_COMPLETION(

@@ -68,7 +68,7 @@ def widen_parnet_conv_helper(params: OrderedDict, mapping, noise_factor=5e-2):
     new_weights = np.zeros((new_out_channel, in_channel, kernel_height, kernel_width))
     for i in range(len(mapping)):
         new_weights[i, :, :, :] = weights[mapping[i], :, :, :].copy() \
-            + np.random.normal(scale=noise_factor*weights[mapping[i], :, :, :].std(), \
+            + np.random.normal(scale=noise_factor*weights[mapping[i], :, :, :].std(),
             size=list(weights[mapping[i], :, :, :].shape))
     new_params['weight'] = torch.from_numpy(new_weights)
     if 'bias' in params.keys():
