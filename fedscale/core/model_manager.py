@@ -535,13 +535,13 @@ class Model_Manager():
         model_training = set()
         for client in clients_to_run:
             for Id, super_model in enumerate(reversed(self.models)):
-                if super_model.macs <= clients_cap[Id]:
+                if super_model.macs <= clients_cap[client]:
                     super_model.assign_one_task()
                     assignment[client] = Id
                     model_training.add(Id)
         logging.info(f"MACs of outstanding models {self.get_all_macs}")
         logging.info(f"MACs of selected clients {clients_cap}")
-        return assignment, model_training 
+        return assignment, list(model_training)
 
     def get_all_models(self):
         models = []
