@@ -229,6 +229,7 @@ parser.add_argument('--model_name', default='None', type=str, help='name of the 
 parser.add_argument('--window_N', default='10', type=int)
 parser.add_argument('--step_M', default='100', type=int)
 parser.add_argument('--device_cap_file', type=str)
+parser.add_argument('--test_data_map_file', type=str, default=None)
 
 args, unknown = parser.parse_known_args()
 args.use_cuda = eval(args.use_cuda)

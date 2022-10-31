@@ -96,6 +96,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.scaled_id = 0
         self.train_loss_buffer = []
         self.model_to_test = []
+        self.test_received = 0
 
     def __init__(self, args):
         logging.info(f"Job args {args}")
@@ -596,15 +597,16 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             results (dictionary): The client test results.
 
         """
-
+        self.test_received += 1
         assert results['model_id'] == self.model_to_test[0]
         results = results['results']
 
         # List append is thread-safe
-        self.test_result_accumulator[self.test_model_id].append(results)
+        self.test_result_accumulator[self.test_model_id] += results
 
         # Have collected all testing results
-        if len(self.test_result_accumulator[self.test_model_id]) == len(self.executors):
+        if self.test_received == len(self.executors):
+            self.test_received = 0
             accumulator = self.test_result_accumulator[self.test_model_id][0]
             for i in range(1, len(self.test_result_accumulator[self.test_model_id])):
                 if self.args.task == "detection":
