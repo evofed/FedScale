@@ -597,8 +597,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         """
 
-        results = results['results']
         assert results['model_id'] == self.model_to_test[0]
+        results = results['results']
 
         # List append is thread-safe
         self.test_result_accumulator[self.test_model_id].append(results)

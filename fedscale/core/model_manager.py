@@ -164,7 +164,7 @@ class SuperModel:
         self.rank = rank
         self.last_gradient_weights = []
         self.model_update_size = sys.getsizeof(pickle.dumps(torch_model)) // 1024.0 * 8.0
-        self.client_records = defaultdict(ClientRecord)
+        self.client_records = {}
 
     def is_converging(self):
         return self.converging
@@ -186,10 +186,16 @@ class SuperModel:
 
     def assign_one_task(self):
         self.task_round += 1
+    
+    def reset_task(self):
+        self.task_round = 0
 
     def normal_weight_aggregation(self, results):
         self.curr_loss += results['moving_loss']
-        self.client_records[results['clientId']].training_loss.append(results['moving_loss'])
+        client_id = results['clientId']
+        if client_id not in self.client_records:
+            self.client_records[client_id] = ClientRecord([])
+        self.client_records[client_id].training_loss.append(results['moving_loss'])
         self.model_in_update += 1
         for p in results['update_weight']:
             if self.model_in_update == 1:
@@ -516,17 +522,24 @@ class Model_Manager():
         for super_model in self.models:
             if super_model:
                 macs.append(super_model.macs)
+        return macs
+
+    def reset_tasks(self):
+        for super_model in self.models:
+            if super_model:
+                super_model.reset_task()
     
     def assign_tasks(self, clients_to_run, clients_cap):
         assignment = {}
         model_training = set()
+        self.reset_tasks()
         for client in clients_to_run:
             for Id, super_model in enumerate(reversed(self.models)):
                 if super_model.macs <= clients_cap[client]:
                     super_model.assign_one_task()
                     assignment[client] = Id
                     model_training.add(Id)
-        logging.info(f"MACs of outstanding models {self.get_all_macs}")
+        logging.info(f"MACs of outstanding models {self.get_all_macs()}")
         logging.info(f"MACs of selected clients {clients_cap}")
         return assignment, list(model_training)
 
