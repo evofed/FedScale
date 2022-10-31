@@ -605,7 +605,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         # Have collected all testing results
         if len(self.test_result_accumulator[self.test_model_id]) == len(self.executors):
-            self.model_to_test.pop(0)
             accumulator = self.test_result_accumulator[self.test_model_id][0]
             for i in range(1, len(self.test_result_accumulator[self.test_model_id])):
                 if self.args.task == "detection":
@@ -637,10 +636,10 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                                                             }
 
             logging.info("FL Testing for model {} in round: {}, virtual_clock: {}, top_1: {} %, top_5: {} %, test loss: {:.4f}, test len: {}"
-                         .format(self.model_in_training[0], self.round, self.global_virtual_clock, self.testing_history['perf'][self.round]['top_1'],
+                         .format(self.model_to_test[0], self.round, self.global_virtual_clock, self.testing_history['perf'][self.round]['top_1'],
                                  self.testing_history['perf'][self.round]['top_5'], self.testing_history['perf'][self.round]['loss'],
                                  self.testing_history['perf'][self.round]['test_len']))
-
+            self.model_to_test.pop(0)
             # Dump the testing result
             with open(os.path.join(logDir, 'testing_perf'), 'wb') as fout:
                 pickle.dump(self.testing_history, fout)
