@@ -127,18 +127,18 @@ class Executor(object):
 
         assert len(testing_sets.getSize()) == len(training_sets.getSize())
 
-        self.n_clients = len(testing_sets.getSize())
+        self.n_clients = len(testing_sets.getSize()['size'])
 
         if self.this_rank != self.num_executors:
-            self.client_partition = range(
+            self.client_partition = list(range(
                 (self.this_rank - 1) * (self.n_clients // self.num_executors) + 1,
                 self.this_rank * (self.n_clients // self.num_executors) + 1
-            )
+            ))
         else:
-            self.client_partition = range(
+            self.client_partition = list(range(
                 (self.this_rank - 1) * (self.n_clients // self.num_executors) + 1,
                 self.n_clients
-            )
+            ))
 
         logging.info("Data partitioner completes ...")
         logging.info(f"Executor {self.this_rank} is partitioned with {len(self.client_partition)} clients: {self.client_partition}")
@@ -376,8 +376,8 @@ class Executor(object):
                     raise Exception(f"Need customized implementation for model testing in {self.args.engine} engine")
 
                 test_loss, acc, acc_5, testResults = test_res
-                logging.info("Client {}: After aggregation round {}, CumulTime {}, eval_time {}, test_loss {}, test_accuracy {:.2f}%, test_5_accuracy {:.2f}% \n"
-                             .format(client_id, self.round, round(time.time() - self.start_run_time, 4), round(time.time() - evalStart, 4), test_loss, acc*100., acc_5*100.))
+                logging.info("Client {} at model {}: After aggregation round {}, CumulTime {}, eval_time {}, test_loss {}, test_accuracy {:.2f}%, test_5_accuracy {:.2f}% \n"
+                             .format(client_id, model_id, self.round, round(time.time() - self.start_run_time, 4), round(time.time() - evalStart, 4), test_loss, acc*100., acc_5*100.))
                 all_test_results.append(testResults)
         gc.collect()
 

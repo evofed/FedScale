@@ -604,7 +604,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         results = results['results']
 
         # List append is thread-safe
-        self.test_result_accumulator[self.test_model_id] += results
+        self.test_result_accumulator[model_id] += results
 
         # Have collected all testing results
         if self.test_received == len(self.executors):
