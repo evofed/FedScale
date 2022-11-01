@@ -85,7 +85,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # ======== model and data ========
         self.model_in_training = []
         self.mapped_models = {}
-        self.test_model_id = 0
+        # self.test_model_id = 0
         # self.test_result_accumulator = [[] for _ in range(0, len(self.model))]
         self.test_result_accumulator = [[]]
         self.tasks_round = 0
@@ -528,15 +528,16 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.round_duration = round_duration
         self.model_manager.reset_model_in_update()
 
-        self.test_result_accumulator = [[] for _ in self.model_in_training]
         self.stats_util_accumulator = []
         self.client_training_results = []
 
         if self.round >= self.args.rounds: 
             self.broadcast_aggregator_events(commons.SHUT_DOWN)
         elif self.round % self.args.eval_interval == 0 or self.round == 1:
+            self.test_result_accumulator = [[] for _ in range(len(self.model_manager.models))]
             self.model_manager.save_models()
             self.model_to_test = self.model_manager.get_active_model_ids()
+            logging.info(f"start to test model(s): {self.model_to_test}")
             self.broadcast_aggregator_events(commons.UPDATE_MODEL)
             self.broadcast_aggregator_events(commons.MODEL_TEST)
         else:
@@ -598,37 +599,38 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         """
 
         assert results['model_id'] == self.model_to_test[0]
+        model_id = results['model_id']
         results = results['results']
 
         # List append is thread-safe
-        self.test_result_accumulator[self.test_model_id].append(results)
+        self.test_result_accumulator[model_id].append(results)
 
         # Have collected all testing results
-        if len(self.test_result_accumulator[self.test_model_id]) == len(self.executors):
-            accumulator = self.test_result_accumulator[self.test_model_id][0]
-            for i in range(1, len(self.test_result_accumulator[self.test_model_id])):
+        if len(self.test_result_accumulator[model_id]) == len(self.executors):
+            accumulator = self.test_result_accumulator[model_id][0]
+            for i in range(1, len(self.test_result_accumulator[model_id])):
                 if self.args.task == "detection":
                     for key in accumulator:
                         if key == "boxes":
                             for j in range(self.imdb.num_classes):
                                 accumulator[key][j] = accumulator[key][j] + \
-                                    self.test_result_accumulator[self.test_model_id][i][key][j]
+                                    self.test_result_accumulator[model_id][i][key][j]
                         else:
-                            accumulator[key] += self.test_result_accumulator[self.test_model_id][i][key]
+                            accumulator[key] += self.test_result_accumulator[model_id][i][key]
                 else:
                     for key in accumulator:
-                        accumulator[key] += self.test_result_accumulator[self.test_model_id][i][key]
+                        accumulator[key] += self.test_result_accumulator[model_id][i][key]
             if self.args.task == "detection":
                 self.testing_history['perf'][self.round] = {'round': self.round, 'clock': self.global_virtual_clock,
-                                                            'model_id': self.test_model_id,
-                                                            'top_1': round(accumulator['top_1']*100.0/len(self.test_result_accumulator[self.test_model_id]), 4),
-                                                            'top_5': round(accumulator['top_5']*100.0/len(self.test_result_accumulator[self.test_model_id]), 4),
+                                                            'model_id': model_id,
+                                                            'top_1': round(accumulator['top_1']*100.0/len(self.test_result_accumulator[model_id]), 4),
+                                                            'top_5': round(accumulator['top_5']*100.0/len(self.test_result_accumulator[model_id]), 4),
                                                             'loss': accumulator['test_loss'],
                                                             'test_len': accumulator['test_len']
                                                             }
             else:
                 self.testing_history['perf'][self.round] = {'round': self.round, 'clock': self.global_virtual_clock,
-                                                            'model_id': self.test_model_id,
+                                                            'model_id': model_id,
                                                             'top_1': round(accumulator['top_1']/accumulator['test_len']*100.0, 4),
                                                             'top_5': round(accumulator['top_5']/accumulator['test_len']*100.0, 4),
                                                             'loss': accumulator['test_loss']/accumulator['test_len'],

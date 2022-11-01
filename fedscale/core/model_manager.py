@@ -453,7 +453,7 @@ class Model_Manager():
         return self.models[-1].torch_model
     
     def model_scale(self):
-        layers = self.models[-1].select_layers_by_graeidnt()
+        layers = self.models[-1].select_layers_by_gradient()
         new_model, last_scaled_layer = self.models[-1].model_scale(layers)
         self.models.append(SuperModel(new_model, self.args, len(self.models), last_scaled_layer))
     
@@ -537,8 +537,9 @@ class Model_Manager():
             for Id, super_model in enumerate(reversed(self.models)):
                 if super_model.macs <= clients_cap[client]:
                     super_model.assign_one_task()
-                    assignment[client] = Id
-                    model_training.add(Id)
+                    assignment[client] = len(self.models) - Id - 1
+                    model_training.add(len(self.models) - Id - 1)
+                    break
         logging.info(f"MACs of outstanding models {self.get_all_macs()}")
         logging.info(f"MACs of selected clients {clients_cap}")
         return assignment, list(model_training)
