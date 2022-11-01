@@ -24,6 +24,7 @@ class Executor(object):
     """
     def __init__(self, args):
 
+        self.client_partition = None
         self.args = args
         self.device = args.cuda_device if args.use_cuda else torch.device(
             'cpu')
@@ -48,6 +49,8 @@ class Executor(object):
         self.start_run_time = time.time()
         self.received_stop_request = False
         self.event_queue = collections.deque()
+
+        self.n_clients = 0
 
         super(Executor, self).__init__()
 
@@ -119,9 +122,26 @@ class Executor(object):
 
         testing_sets = DataPartitioner(
             data=test_dataset, args=self.args, numOfClass=self.args.num_class, isTest=True)
-        testing_sets.partition_data_helper(num_clients=self.num_executors)
+        testing_sets.partition_data_helper(
+            num_clients=self.args.num_participants, data_map_file=self.args.test_data_map_file)
+
+        assert len(testing_sets.getSize()) == len(training_sets.getSize())
+
+        self.n_clients = len(testing_sets.getSize())
+
+        if self.this_rank != self.num_executors:
+            self.client_partition = range(
+                (self.this_rank - 1) * (self.n_clients // self.num_executors) + 1,
+                self.this_rank * (self.n_clients // self.num_executors) + 1
+            )
+        else:
+            self.client_partition = range(
+                (self.this_rank - 1) * (self.n_clients // self.num_executors) + 1,
+                self.n_clients
+            )
 
         logging.info("Data partitioner completes ...")
+        logging.info(f"Executor {self.this_rank} is partitioned with {len(self.client_partition)} clients: {self.client_partition}")
 
         if self.task == 'nlp':
             self.collate_fn = collate
@@ -332,34 +352,36 @@ class Executor(object):
         evalStart = time.time()
         device = self.device
         model = self.load_global_model()[model_id]
+        all_test_results = []
         if self.task == 'rl':
             client = RLClient(args)
             test_res = client.test(args, self.this_rank, model, device=device)
             _, _, _, testResults = test_res
         else:
-            data_loader = select_dataset(self.this_rank, self.testing_sets,
-                                         batch_size=args.test_bsz, args=args,
-                                         isTest=True, collate_fn=self.collate_fn
-                                         )
+            for client_id in self.client_partition:
+                data_loader = select_dataset(client_id, self.testing_sets,
+                                             batch_size=args.test_bsz, args=args,
+                                             isTest=True, collate_fn=self.collate_fn
+                                             )
 
-            if self.task == 'voice':
-                criterion = CTCLoss(reduction='mean').to(device=device)
-            else:
-                criterion = torch.nn.CrossEntropyLoss().to(device=device)
+                if self.task == 'voice':
+                    criterion = CTCLoss(reduction='mean').to(device=device)
+                else:
+                    criterion = torch.nn.CrossEntropyLoss().to(device=device)
 
-            if self.args.engine == commons.PYTORCH:
-                test_res = test_model(self.this_rank, model, data_loader,
-                                      device=device, criterion=criterion, tokenizer=tokenizer)
-            else:
-                raise Exception(f"Need customized implementation for model testing in {self.args.engine} engine")
+                if self.args.engine == commons.PYTORCH:
+                    test_res = test_model(client_id, model, data_loader,
+                                          device=device, criterion=criterion, tokenizer=tokenizer)
+                else:
+                    raise Exception(f"Need customized implementation for model testing in {self.args.engine} engine")
 
-            test_loss, acc, acc_5, testResults = test_res
-            logging.info("After aggregation round {}, CumulTime {}, eval_time {}, test_loss {}, test_accuracy {:.2f}%, test_5_accuracy {:.2f}% \n"
-                         .format(self.round, round(time.time() - self.start_run_time, 4), round(time.time() - evalStart, 4), test_loss, acc*100., acc_5*100.))
-
+                test_loss, acc, acc_5, testResults = test_res
+                logging.info("Client {}: After aggregation round {}, CumulTime {}, eval_time {}, test_loss {}, test_accuracy {:.2f}%, test_5_accuracy {:.2f}% \n"
+                             .format(client_id, self.round, round(time.time() - self.start_run_time, 4), round(time.time() - evalStart, 4), test_loss, acc*100., acc_5*100.))
+                all_test_results.append(testResults)
         gc.collect()
 
-        return testResults
+        return all_test_results
 
     def client_register(self):
         """Register the executor information to the aggregator
