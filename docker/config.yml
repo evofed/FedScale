@@ -42,7 +42,7 @@ job_conf:
     - model: nasbench201_0                            # Models: e.g., shufflenet_v2_x2_0, mobilenet_v2, resnet34, albert-base-v2
     - model_name: None
     - gradient_policy: fed-avg                 # {"fed-yogi", "fed-prox", "fed-avg"}, "fed-avg" by default
-    - eval_interval: 5                     # How many rounds to run a testing on the testing set
+    - eval_interval: 20                     # How many rounds to run a testing on the testing set
     - rounds: 5000                          # Number of rounds to run this training. We use 1000 in our paper, while it may converge w/ ~400 rounds
     - filter_less: 51                       # Remove clients w/ less than 21 samples
     - num_loaders: 0
@@ -53,13 +53,13 @@ job_conf:
     - use_cuda: True
     - candidate_capacity: 1
     - convergent_threshold: 0.0001
-    - transform_threshold: 0.1
+    - transform_threshold: 0.001
     - window_N: 10
     - step_M: 100
     - gradient_buffer_length: 5
     - nas: True
     # - mode: from_scratch # from_one, from_multiple
     - selected_ratio: 0.9
-    - step_M: 10
+    - step_M: 100
     - window_N: 10
     # - selected_layers: cells.1.downsample.1.0.0,cells.1.downsample.1.2.0
