@@ -16,6 +16,7 @@ from dataclasses import dataclass
 omit_operator = ['Identity', 'Constant']
 conflict_operator = ['Add']
 weight_operator = ['Conv', 'Gemm']
+size_sensitive_operator = ['Conv', 'BatchNormalization', 'Gemm']
 
 
 class Widen_Operator():
@@ -425,6 +426,28 @@ class SuperModel:
         #     translate_model(self.torch_model)
         return new_model, scaled_layer
 
+    def get_size_sensitive_layers(self):
+        layers = []
+        for node_id in self.dag.nodes():
+            if self.dag.nodes()[node_id]['attr'].operator in size_sensitive_operator:
+                layers.append([node_id, self.dag.nodes()[node_id]['attr'].name])
+        return layers
+
+    def model_shrink(self, ratio: float=0.5):
+        # shrink all weighted layers, including conv, bn, and ln
+        layers = self.get_size_sensitive_layers()
+        new_model = deepcopy(self.torch_model)
+        for idx, layer in enumerate(layers):
+            node_id, layer_name = layer
+            node = self.dag.nodes()[node_id]['attr']
+            if node.operator == 'Gemm':
+                new_model = shrink_ln(new_model, layer_name, ratio, idx==len(layers)-1)
+            elif node.operator == 'Conv':
+                new_model = shrink_conv(new_model, layer_name, ratio, idx==0, idx==len(layers)-1)
+            elif node.operator == 'BatchNormalization':
+                new_model = shrink_bn(new_model, layer_name, ratio)
+        return new_model
+
 
 class Model_Manager():
     def __init__(self, init_model, args) -> None:
@@ -456,7 +479,11 @@ class Model_Manager():
         layers = self.models[-1].select_layers_by_gradient()
         new_model, last_scaled_layer = self.models[-1].model_scale(layers)
         self.models.append(SuperModel(new_model, self.args, len(self.models), last_scaled_layer))
-    
+
+    def model_shrink(self, ratio: float=0.5):
+        new_model = self.models[-1].model_shrink()
+        self.models.append(SuperModel(new_model, self.args, len(self.models), set()))
+
     def get_candidate_layers(self, model_id):
         assert self.models[model_id] != None
         return self.models[model_id].get_weighted_layers()
