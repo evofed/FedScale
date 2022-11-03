@@ -35,7 +35,7 @@ for dataset in dataset_info:
     min_macs, min_params = profile(model_zoo['nasbench'], inputs=(dummy_input, ), verbose=False)
     print(f"min MACs: {min_macs}, min params: {min_params}")
     for model_name in ['resnet18', 'shufflenet']:
-        max_macs, max_params = profile(model_zoo['resnet18'], inputs=(dummy_input, ), verbose=False)
+        max_macs, max_params = profile(model_zoo[model_name], inputs=(dummy_input, ), verbose=False)
         print(f"max MACs: {max_macs}, max MACs: {max_params}")
         # normal distribution
         client_cap_macs = np.random.normal(loc=(min_macs+max_macs)/2, scale=(min_macs+max_macs)/2/2, size=n_client)

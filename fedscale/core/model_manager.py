@@ -1,3 +1,4 @@
+import collections
 import logging
 import os
 import sys
@@ -166,6 +167,7 @@ class SuperModel:
         self.last_gradient_weights = []
         self.model_update_size = sys.getsizeof(pickle.dumps(torch_model)) // 1024.0 * 8.0
         self.client_records = {}
+        self.count = collections.OrderedDict()
 
     def is_converging(self):
         return self.converging
@@ -224,6 +226,48 @@ class SuperModel:
             self.check_convergence()
             logging.info(f'(DEBUG) gradient buffer of model {self.rank}: {self.model_grads_buffer}')
             logging.info(f'training loss of model {self.rank}: {self.curr_loss}')
+
+    def heterofl_combine_models(self, results):
+        self.curr_loss += results['moving_loss']
+        client_id = results['clientId']
+        if client_id not in self.client_records:
+            self.client_records[client_id] = ClientRecord([])
+        self.client_records[client_id].training_loss.append(results['moving_loss'])
+        self.model_in_update += 1
+        for p in results['update_weight']:
+            weights = results['update_weight'][p]
+            assert p in self.model_weights
+            if self.model_in_update == 1:
+                # reset model weights and count
+                self.model_weights[p].data = torch.zeros_like(self.model_weights[p].data)
+                self.count[p] = torch.zeros_like(self.model_weights[p].data)
+            if self.model_weights[p].data.dim() == 1:
+                for i in range(weights.shape[0]):
+                    self.count[p][i] += 1
+                    self.model_weights[p].data[i] += weights[i]
+            elif self.model_weights[p].data.dim() == 2:
+                for i in range(weights.shape[0]):
+                    for j in range(weights.shape[1]):
+                        self.count[p][i,j] += 1
+                        self.model_weights[p].data[i,j] += weights[i,j]
+            elif self.model_weights[p].data.dim() == 4:
+                for i in range(weights.shape[0]):
+                    for j in range(weights.shape[1]):
+                        for k in range(weights.shape[2]):
+                            for r in range(weights.shape[3]):
+                                self.count[p][i,j,k,r] += 1
+                                self.model_weights[p].data[i,j,k,r] += weights[i,j,k,r]
+            else:
+                raise Exception(f"does not support dim {self.model_weights[p].data.dim()}")
+        if self.model_in_update == self.task_round:
+            for p in self.model_weights:
+                d_type = self.model_weights[p].data.dtype
+                self.model_weights[p].data = torch.div(
+                    self.model_weights[p].data,
+                    self.count[p].to(dtype=d_type)).to(dtype=d_type)
+            self.curr_loss /= self.curr_loss
+            logging.info(f'training loss of model {self.rank}: {self.curr_loss}')
+
 
     def check_convergence(self):
         if len(self.train_loss_buffer) > self.args.window_N + self.args.step_M:
@@ -510,6 +554,19 @@ class Model_Manager():
         else:
             raise NotImplementedError('not implemented soft aggregation')
 
+    def weight_aggregation_heterofl(self, results):
+        self.models[0].heterofl_combine_models(results)
+
+    def reload_sub_models_heterofl(self):
+        submodel_1 = self.models[0].model_shrink(0.5)
+        submodel_2 = self.models[0].model_shrink(0.25)
+        submodel_3 = self.models[0].model_shrink(0.125)
+        submodel_4 = self.models[0].model_shrink(0.0625)
+        self.models[1] = SuperModel(submodel_1, self.args, 1, set())
+        self.models[2] = SuperModel(submodel_2, self.args, 2, set())
+        self.models[3] = SuperModel(submodel_3, self.args, 3, set())
+        self.models[4] = SuperModel(submodel_4, self.args, 4, set())
+
     def save_last_param(self):
         for super_model in self.models:
             if super_model:
@@ -562,6 +619,21 @@ class Model_Manager():
         self.reset_tasks()
         for client in clients_to_run:
             for Id, super_model in enumerate(reversed(self.models)):
+                if super_model.macs <= clients_cap[client]:
+                    super_model.assign_one_task()
+                    assignment[client] = len(self.models) - Id - 1
+                    model_training.add(len(self.models) - Id - 1)
+                    break
+        logging.info(f"MACs of outstanding models {self.get_all_macs()}")
+        logging.info(f"MACs of selected clients {clients_cap}")
+        return assignment, list(model_training)
+
+    def assign_tasks_heterofl(self, clients_to_run, clients_cap):
+        assignment = {}
+        model_training = set()
+        self.reset_tasks()
+        for client in clients_to_run:
+            for Id, super_model in enumerate(self.models):
                 if super_model.macs <= clients_cap[client]:
                     super_model.assign_one_task()
                     assignment[client] = len(self.models) - Id - 1

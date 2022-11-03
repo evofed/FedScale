@@ -16,8 +16,8 @@ class Customized_Aggregator(Aggregator):
         self.param_idx = {}
 
 
-    def init_model(self):
-        return customized_fllibs.init_model()
+    # def init_model(self):
+    #     return customized_fllibs.init_model()
 
     def tictak_client_tasks(self, sampled_clients, num_clients_to_collect):
         sampledClientsReal = []

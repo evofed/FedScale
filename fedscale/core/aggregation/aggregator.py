@@ -509,7 +509,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         logging.info(f"Selected participants to run: {clientsToRun}")
         # Issue requests to the resource manager; Tasks ordered by the completion time
         self.resource_manager.register_tasks(clientsToRun)
-        self.mapped_models, self.model_in_training = self.model_manager.assign_tasks(clientsToRun, clients_cap)
+        self.mapped_models, self.model_in_training = self.model_manager.assign_tasks_heterofl(clientsToRun, clients_cap)
         logging.info(f"model(s) {self.model_in_training} will be trained in the next round")
         logging.info(f"model assignment: {self.mapped_models}")
         self.tasks_round = len(clientsToRun)
