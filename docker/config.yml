@@ -8,7 +8,10 @@ ps_ip: 10.0.0.1
 # Note that if we collocate ps and worker on same GPU, then we need to decrease this number of available processes on that GPU by 1
 # E.g., master node has 4 available processes, then 1 for the ps, and worker should be set to: worker:3
 worker_ips: 
-    - 10.0.0.1:[8,8,8,8]
+    - 10.0.0.1:[8]
+    - 10.0.0.2:[8]
+    - 10.0.0.3:[8]
+    - 10.0.0.4:[8]
 
 exp_path: $FEDSCALE_HOME/fedscale/core
 
@@ -40,7 +43,7 @@ job_conf:
     - device_avail_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_behave_trace
     - device_cap_file: $FEDSCALE_HOME/benchmark/device_cap/femnist_cap/resnet18-uniform.csv
     - model: nasbench201_0                            # Models: e.g., shufflenet_v2_x2_0, mobilenet_v2, resnet34, albert-base-v2
-    - model_name: None
+    - model_name: model_19
     - gradient_policy: fed-avg                 # {"fed-yogi", "fed-prox", "fed-avg"}, "fed-avg" by default
     - eval_interval: 20                     # How many rounds to run a testing on the testing set
     - rounds: 5000                          # Number of rounds to run this training. We use 1000 in our paper, while it may converge w/ ~400 rounds
@@ -53,7 +56,7 @@ job_conf:
     - use_cuda: True
     - candidate_capacity: 1
     - convergent_threshold: 0.0001
-    - transform_threshold: 0.001
+    - transform_threshold: 0
     - window_N: 10
     - step_M: 100
     - gradient_buffer_length: 5
