@@ -567,6 +567,10 @@ class Model_Manager():
                     assignment[client] = len(self.models) - Id - 1
                     model_training.add(len(self.models) - Id - 1)
                     break
+                if client not in assignment:
+                    super_model.assign_one_task()
+                    assignment[client] = 0
+                    model_training.add(0)
         logging.info(f"MACs of outstanding models {self.get_all_macs()}")
         logging.info(f"MACs of selected clients {clients_cap}")
         return assignment, list(model_training)
