@@ -229,6 +229,24 @@ def init_model():
             elif args.model_zoo == "torchcv":
                 model = tormodels.__dict__[args.model](
                     num_classes=outputClass[args.data_set])
+            elif args.model_zpp == "evofed-zoo":
+                if args.model == "nasbench201_0":
+                    config = {
+                        'name': 'infer.tiny',
+                        'N': 0,
+                        'C': 1,
+                        'arch_str': '|nor_conv_3x3~0|+|nor_conv_3x3~0|nor_conv_3x3~1|+|skip_connect~0|nor_conv_3x3~1|nor_conv_3x3~2|',
+                        'num_classes': outputClass[args.data_set]
+                    }
+                    model = nasbench.get_cell_based_tiny_net(config)
+                elif args.model == "naive_cnn":
+                    from fedscale.utils.models.evofed.naive_cnn import ncnn_cifar
+                    model = ncnn_cifar(num_classes=outputClass[args.data_set])
+                elif args.model == "small-resnet":
+                    from fedscale.utils.models.evofed.small_resnet18 import small_resnet18
+                    model = small_resnet18(num_classes=outputClass[args.data_set])
+                else:
+                    raise NameError(f"Model {args.model} does not exist in EvoFed model zoo")
             else:
                 raise NameError(f"Model zoo {args.model_zoo} does not exist")
     return model

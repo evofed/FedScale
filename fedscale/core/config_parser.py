@@ -31,7 +31,7 @@ parser.add_argument('--clock_factor', type=float, default=1.0,
 
 # The configuration of model and dataset
 parser.add_argument('--model_zoo', type=str, default='torchcv',
-                    help="model zoo to load the models from", choices=["torchcv", "fedscale-zoo"])
+                    help="model zoo to load the models from", choices=["torchcv", "fedscale-zoo", "evofed-zoo"])
 parser.add_argument('--data_dir', type=str, default='~/cifar10/')
 parser.add_argument('--device_conf_file', type=str, default='/tmp/client.cfg')
 parser.add_argument('--model', type=str, default='shufflenet_v2_x2_0')
