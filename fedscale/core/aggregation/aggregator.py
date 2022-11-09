@@ -441,6 +441,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 results['update_weight'][p]).to(device=self.device)
         
         comming_model_id = self.mapped_models[client_id]
+        results['cap'] = self.client_manager.get_capacity(client_id)
         self.model_manager.weight_aggregation(results, comming_model_id, need_soft)
             
     def save_last_param(self):

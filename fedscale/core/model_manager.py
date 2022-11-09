@@ -157,6 +157,7 @@ class SuperModel:
         self.converged = False
         self.converging = False
         self.model_in_update = 0
+        self.gradient_in_update = 0
         self.model_weights = self.torch_model.state_dict()
         self.model_grads_buffer = defaultdict(list)
         self.task_round = 0
@@ -181,6 +182,7 @@ class SuperModel:
     
     def reset_model_in_update(self):
         self.model_in_update = 0
+        self.gradient_in_update = 0
 
     def assign_task(self, task):
         self.task_round = task
@@ -193,6 +195,7 @@ class SuperModel:
 
     def normal_weight_aggregation(self, results):
         self.curr_loss += results['moving_loss']
+        cap = results['cap']
         client_id = results['clientId']
         if client_id not in self.client_records:
             self.client_records[client_id] = ClientRecord([])
@@ -205,9 +208,11 @@ class SuperModel:
                 self.model_weights[p].data += results['update_weight'][p]
             # aggregate layer gradients
         for l in results['grad_dict']:
-            if self.model_in_update == 1:
+            if self.gradient_in_update == 0 and cap > self.macs:
+                self.gradient_in_update += 1
                 self.model_grads_buffer[l].append(results['grad_dict'][l])
-            else:
+            elif cap > self.macs:
+                self.gradient_in_update += 1
                 self.model_grads_buffer[l][-1] += results['grad_dict'][l]
             if len(self.model_grads_buffer[l]) > self.args.gradient_buffer_length:
                 self.model_grads_buffer[l].pop(0)
@@ -217,8 +222,10 @@ class SuperModel:
                 self.model_weights[p].data = (
                         self.model_weights[p] / float(self.task_round)).to(dtype=d_type)
             for l in self.model_grads_buffer:
-                self.model_grads_buffer[l][-1] = (
-                        self.model_grads_buffer[l][-1] / float(self.task_round))
+                if self.gradient_in_update > 0:
+                    logging.info(f"get {self.gradient_in_update} gradients")
+                    self.model_grads_buffer[l][-1] = (
+                            self.model_grads_buffer[l][-1] / float(self.gradient_in_update))
             self.curr_loss = self.curr_loss / self.task_round
             self.train_loss_buffer.append(self.curr_loss)
             self.check_convergence()
