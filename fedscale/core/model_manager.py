@@ -207,12 +207,13 @@ class SuperModel:
             else:
                 self.model_weights[p].data += results['update_weight'][p]
             # aggregate layer gradients
-        for l in results['grad_dict']:
-            if self.gradient_in_update == 0 and cap > self.macs:
-                self.gradient_in_update += 1
+        if self.gradient_in_update == 0 and cap > self.macs:
+            self.gradient_in_update += 1
+            for l in results['grad_dict']:
                 self.model_grads_buffer[l].append(results['grad_dict'][l])
-            elif cap > self.macs:
-                self.gradient_in_update += 1
+        elif cap > self.macs:
+            self.gradient_in_update += 1
+            for l in results['grad_dict']:
                 self.model_grads_buffer[l][-1] += results['grad_dict'][l]
             if len(self.model_grads_buffer[l]) > self.args.gradient_buffer_length:
                 self.model_grads_buffer[l].pop(0)
