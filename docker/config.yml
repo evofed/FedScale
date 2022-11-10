@@ -66,4 +66,5 @@ job_conf:
     - selected_ratio: 0.9
     - step_M: 100
     - window_N: 10
+    - soft_agg: False
     # - selected_layers: cells.1.downsample.1.0.0,cells.1.downsample.1.2.0

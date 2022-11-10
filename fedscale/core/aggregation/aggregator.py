@@ -424,7 +424,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         
         self.update_lock.release()
 
-    def aggregate_client_weights(self, results, client_id, need_soft: bool=False):
+    def aggregate_client_weights(self, results, client_id):
         """May aggregate client updates on the fly"""
         """
             [FedAvg] "Communication-Efficient Learning of Deep Networks from Decentralized Data".
@@ -442,7 +442,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         
         comming_model_id = self.mapped_models[client_id]
         results['cap'] = self.client_manager.get_capacity(client_id)
-        self.model_manager.weight_aggregation(results, comming_model_id, need_soft)
+        self.model_manager.weight_aggregation(results, comming_model_id)
             
     def save_last_param(self):
         """ Save the last model parameters
