@@ -167,6 +167,8 @@ class SuperModel:
         self.last_gradient_weights = []
         self.model_update_size = sys.getsizeof(pickle.dumps(torch_model)) // 1024.0 * 8.0
         self.client_records = {}
+        self.count = collections.OrderedDict()
+        self.trained_round = 0
 
     def is_converging(self):
         return self.converging
@@ -217,6 +219,7 @@ class SuperModel:
             if len(self.model_grads_buffer[l]) > self.args.gradient_buffer_length:
                 self.model_grads_buffer[l].pop(0)
         if self.model_in_update == self.task_round:
+            self.trained_round += 1
             for p in self.model_weights:
                 d_type = self.model_weights[p].data.dtype
                 self.model_weights[p].data = (
@@ -231,6 +234,82 @@ class SuperModel:
             self.check_convergence()
             logging.info(f'(DEBUG) gradient buffer of model {self.rank}: {self.model_grads_buffer}')
             logging.info(f'training loss of model {self.rank}: {self.curr_loss}')
+
+    def soft_weight_aggregation(self, results, model_id):
+        self.curr_loss += results['moving_loss']
+        client_id = results['client_id']
+        cap = results['cap']
+        if client_id not in self.client_records:
+            self.client_records[client_id] = ClientRecord([])
+        self.client_records[client_id].training_loss.append(results['moving_loss'])
+        self.model_in_update += 1
+        for p in results['update_weight']:
+            weights = results['update_weight'][p]
+            if p not in self.model_weights:
+                continue
+            if self.model_in_update == 1:
+            # reset model weights and count
+                self.model_weights[p].data = torch.zeros_like(self.model_weights[p].data)
+                self.count[p] = torch.zeros_like(self.model_weights[p].data)
+            if self.model_weights[p].data.dim() == 1:
+                for i in range(weights.shape[0]):
+                    if self.rank == model_id:
+                        self.count[p][i] += 1
+                        self.model_weights[p].data[i] += weights[i]
+                    else:
+                        self.count[p][i] += 1. / float(self.trained_round)
+                        self.model_weights[p].data[i] += weights[i] / float(self.trained_round)
+            elif self.model_weights[p].data.dim() == 2:
+                for i in range(weights.shape[0]):
+                    for j in range(weights.shape[1]):
+                        if self.rank == model_id:
+                            self.count[p][i, j] += 1
+                            self.model_weights[p].data[i, j] += weights[i, j]
+                        else:
+                            self.count[p][i] += 1. / self.trained_round
+                            self.model_weights[p].data[i] += weights[i] / float(self.trained_round)
+            elif self.model_weights[p].data.dim() == 4:
+                for i in range(weights.shape[0]):
+                    for j in range(weights.shape[1]):
+                        for k in range(weights.shape[2]):
+                            for r in range(weights.shape[3]):
+                                if self.rank == model_id:
+                                    self.count[p][i, j, k, r] += 1.
+                                    self.model_weights[p].data[i, j, k, r] += weights[i, j, k, r]
+                                else:
+                                    self.count[p][i, j, k, r] += 1. / float(self.trained_round)
+                                    self.model_weights[p].data[i, j, k, r] += weights[i, j, k, r] / float(self.trained_round)
+            else:
+                raise Exception(f"does not support dim {self.model_weights[p].data.dim()}")
+        if model_id == self.rank:
+            if self.gradient_in_update == 0 and cap > self.macs:
+                self.gradient_in_update += 1
+                for l in results['grad_dict']:
+                    self.model_grads_buffer[l].append(results['grad_dict'][l])
+            elif cap > self.macs:
+                self.gradient_in_update += 1
+                for l in results['grad_dict']:
+                    self.model_grads_buffer[l][-1] += results['grad_dict'][l]
+                if len(self.model_grads_buffer[l]) > self.args.gradient_buffer_length:
+                    self.model_grads_buffer[l].pop(0)
+        if self.model_in_update == self.task_round:
+            self.trained_round += 1
+            for p in self.model_weights:
+                d_type = self.model_weights[p].data.dtype
+                self.model_weights[p].data = torch.div(
+                    self.model_weights[p].data,
+                    self.count[p].to(dtype=d_type)).to(dtype=d_type)
+            for l in self.model_grads_buffer:
+                if self.gradient_in_update > 0:
+                    logging.info(f"get {self.gradient_in_update} gradients")
+                    self.model_grads_buffer[l][-1] = (
+                        self.model_grads_buffer[l][-1] / float(self.gradient_in_update)
+                    )
+            self.curr_loss /= self.task_round
+            self.train_loss_buffer.append(self.curr_loss)
+            self.check_convergence()
+            logging.info(f'training loss of model {self.rank}: {self.curr_loss}')
+
 
     def check_convergence(self):
         if len(self.train_loss_buffer) > self.args.window_N + self.args.step_M:
@@ -508,14 +587,19 @@ class Model_Manager():
             if super_model:
                 super_model.reset_cur_loss()
 
-    def weight_aggregation(self, results, model_id, soft: bool=False):
-        if not soft:
+    def weight_aggregation(self, results, model_id):
+        if not self.args.soft_agg:
             self.models[model_id].normal_weight_aggregation(results)
             if self.models[model_id].converged:
                 self.models[model_id].terminate()
                 self.models[model_id] = None
         else:
-            raise NotImplementedError('not implemented soft aggregation')
+            for idx, model in enumerate(self.models):
+                model.soft_weight_aggregation(results, model_id)
+                if model.converged:
+                    model.terminate()
+                    self.models[idx] = None
+
 
     def save_last_param(self):
         for super_model in self.models:
@@ -578,6 +662,8 @@ class Model_Manager():
                 super_model.assign_one_task()
                 assignment[client] = 0
                 model_training.add(0)
+        if self.args.soft_agg:
+            super_model.assign_task(len(clients_to_run))
         logging.info(f"MACs of outstanding models {self.get_all_macs()}")
         logging.info(f"MACs of selected clients {clients_cap}")
         return assignment, list(model_training)

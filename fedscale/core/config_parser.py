@@ -230,9 +230,12 @@ parser.add_argument('--window_N', default='10', type=int)
 parser.add_argument('--step_M', default='100', type=int)
 parser.add_argument('--device_cap_file', type=str)
 parser.add_argument('--test_data_map_file', type=str, default=None)
+parser.add_argument('--soft_agg', type=bool, default=False)
 
 args, unknown = parser.parse_known_args()
 args.use_cuda = eval(args.use_cuda)
+args.nas = eval(args.nas)
+args.soft_agg = eval(args.soft_agg)
 
 
 datasetCategories = {'Mnist': 10, 'cifar10': 10, "imagenet": 1000, 'emnist': 47,
