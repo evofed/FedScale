@@ -8,9 +8,9 @@ dependencies:
   - pip=20.0.2
   - pip:
     - torch_optimizer
-    - torch
+    - torch==1.12.1
     - tensorflow
-    - torchvision
+    - torchvision==0.13.1
     - transformers
     - scipy==1.4.1
     - matplotlib==3.1.3
