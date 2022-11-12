@@ -31,3 +31,4 @@ dependencies:
     - librosa==0.7.2
     - networkx
     - onnx
+    - thop
