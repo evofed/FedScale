@@ -238,8 +238,11 @@ class SuperModel:
 
     def soft_weight_aggregation(self, results, model_id):
         self.curr_loss += results['moving_loss']
-        client_id = results['client_id']
+        client_id = results['clientId']
         cap = results['cap']
+        if model_id > self.rank:
+            return
+        logging.info(f"aggregating model {model_id} into {self.rank}")
         if client_id not in self.client_records:
             self.client_records[client_id] = ClientRecord([])
         self.client_records[client_id].training_loss.append(results['moving_loss'])
@@ -252,7 +255,10 @@ class SuperModel:
             # reset model weights and count
                 self.model_weights[p].data = torch.zeros_like(self.model_weights[p].data)
                 self.count[p] = torch.zeros_like(self.model_weights[p].data)
-            if self.model_weights[p].data.dim() == 1:
+            if self.model_weights[p].data.dim() == 0:
+                self.count[p] = torch.tensor(1)
+                self.model_weights[p] = weights
+            elif self.model_weights[p].data.dim() == 1:
                 for i in range(weights.shape[0]):
                     if self.rank == model_id:
                         self.count[p][i] += 1
@@ -664,7 +670,12 @@ class Model_Manager():
                 assignment[client] = 0
                 model_training.add(0)
         if self.args.soft_agg:
-            super_model.assign_task(len(clients_to_run))
+            self.models[-1].assign_task(len(clients_to_run))
+        # (DEBUG) check model tasks
+        tasks = {}
+        for idx, model in enumerate(self.models):
+            tasks[idx] = model.task_round
+        logging.info(f"tasks: {tasks}")
         logging.info(f"MACs of outstanding models {self.get_all_macs()}")
         logging.info(f"MACs of selected clients {clients_cap}")
         return assignment, list(model_training)
