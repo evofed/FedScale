@@ -71,9 +71,14 @@ class Client(object):
         # get layer gradient
         grad_dict = dict()
         for layer in self.layer_names:
-            grad = get_model_layer_grad(model, layer[1])
-            weight = get_model_layer_weight(model, layer[1])
-            grad_dict[layer[1]] = torch.norm(grad.data.cpu()) / torch.norm(weight.data.cpu())
+            try:
+                grad = get_model_layer_grad(model, layer[1])
+                weight = get_model_layer_weight(model, layer[1])
+                grad_dict[layer[1]] = torch.norm(grad.data.cpu()) / torch.norm(weight.data.cpu())
+            except Exception as e:
+                logging.info(f"encounter error {e} when calculating gradients.")
+                logging.info(get_model_layer_weight(model, layer[1]))
+                raise Exception
         results['grad_dict'] = grad_dict
         
         if error_type is None:

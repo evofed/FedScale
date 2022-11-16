@@ -172,6 +172,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         else:
             model = init_model()
 
+        logging.info(f"{model}")
+
         self.model_manager = Model_Manager(model, self.args)
 
     def init_task_context(self):
