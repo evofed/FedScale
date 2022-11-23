@@ -131,6 +131,7 @@ def translate_model(model):
             layername2id[dag.nodes()[node_id]['attr'].name] = node_id
     
     return dag, name2id, layername2id
+
 dummy_input = torch.randn(10, 3, 224, 224)
 dataset_input = {
     'femnist': torch.randn(1, 3, 28, 28),
@@ -169,6 +170,13 @@ class SuperModel:
         self.client_records = {}
         self.count = collections.OrderedDict()
         self.trained_round = 0
+        self.inherit = {}
+        if rank == 0:
+            for layer in self.get_weighted_layers():
+                self.inherit[layer[1]] = 0
+
+    def load_inherit(self, inherit):
+        self.inherit = inherit
 
     def is_converging(self):
         return self.converging
@@ -185,6 +193,7 @@ class SuperModel:
     def reset_model_in_update(self):
         self.model_in_update = 0
         self.gradient_in_update = 0
+        self.count = collections.OrderedDict()
 
     def assign_task(self, task):
         self.task_round = task
@@ -235,7 +244,7 @@ class SuperModel:
             logging.info(f'(DEBUG) gradient buffer of model {self.rank}: {self.model_grads_buffer}')
             logging.info(f'training loss of model {self.rank}: {self.curr_loss}')
 
-    def soft_weight_aggregation(self, results, model_id):
+    def soft_weight_aggregation(self, results, model_id, similarity):
         self.curr_loss += results['moving_loss']
         client_id = results['client_id']
         cap = results['cap']
@@ -251,34 +260,56 @@ class SuperModel:
             # reset model weights and count
                 self.model_weights[p].data = torch.zeros_like(self.model_weights[p].data)
                 self.count[p] = torch.zeros_like(self.model_weights[p].data)
+            if p not in self.count:
+                self.model_weights[p].data = torch.zeros_like(self.model_weights[p].data)
+                self.count[p] = torch.zeros_like(self.model_weights[p].data)
+            if self.model_weights[p].data.dim() == 0:
+                if self.rank == model_id:
+                    self.count[p] = torch.tensor(0)
+                    self.model_weights[p].data = weights
             if self.model_weights[p].data.dim() == 1:
                 for i in range(weights.shape[0]):
                     if self.rank == model_id:
                         self.count[p][i] += 1
                         self.model_weights[p].data[i] += weights[i]
                     else:
-                        self.count[p][i] += 1. / float(self.trained_round)
-                        self.model_weights[p].data[i] += weights[i] / float(self.trained_round)
+                        self.count[p][i] += similarity / float(self.trained_round)
+                        self.model_weights[p].data[i] += weights[i] * similarity / float(self.trained_round)
             elif self.model_weights[p].data.dim() == 2:
-                for i in range(weights.shape[0]):
-                    for j in range(weights.shape[1]):
-                        if self.rank == model_id:
-                            self.count[p][i, j] += 1
-                            self.model_weights[p].data[i, j] += weights[i, j]
-                        else:
-                            self.count[p][i] += 1. / self.trained_round
-                            self.model_weights[p].data[i] += weights[i] / float(self.trained_round)
+                # for i in range(weights.shape[0]):
+                #     for j in range(weights.shape[1]):
+                #         if self.rank == model_id:
+                #             self.count[p][i, j] += 1
+                #             self.model_weights[p].data[i, j] += weights[i, j]
+                #         else:
+                #             self.count[p][i, j] += similarity / self.trained_round
+                #             self.model_weights[p].data[i, j] += weights[i, j] * similarity / float(self.trained_round)
+                dim1, dim2 = weights.shape
+                if self.rank == model_id:
+                    self.model_weights[p].data[:dim1, :dim2] += weights
+                    self.count[p][:dim1, :dim2] += torch.ones((dim1, dim2))
+                else:
+                    self.model_weights[p].data[:dim1, :dim2] += weights * similarity / float(self.trained_round)
+                    self.count[p][:dim1, :dim2] += torch.ones((dim1, dim2)) * similarity / float(self.trained_round)
             elif self.model_weights[p].data.dim() == 4:
-                for i in range(weights.shape[0]):
-                    for j in range(weights.shape[1]):
-                        for k in range(weights.shape[2]):
-                            for r in range(weights.shape[3]):
-                                if self.rank == model_id:
-                                    self.count[p][i, j, k, r] += 1.
-                                    self.model_weights[p].data[i, j, k, r] += weights[i, j, k, r]
-                                else:
-                                    self.count[p][i, j, k, r] += 1. / float(self.trained_round)
-                                    self.model_weights[p].data[i, j, k, r] += weights[i, j, k, r] / float(self.trained_round)
+                # for i in range(weights.shape[0]):
+                #     for j in range(weights.shape[1]):
+                #         for k in range(weights.shape[2]):
+                #             for r in range(weights.shape[3]):
+                #                 if self.rank == model_id:
+                #                     self.count[p][i, j, k, r] += 1.
+                #                     self.model_weights[p].data[i, j, k, r] += weights[i, j, k, r]
+                #                 else:
+                #                     self.count[p][i, j, k, r] += similarity / float(self.trained_round)
+                #                     self.model_weights[p].data[i, j, k, r] += weights[i, j, k, r] * similarity / float(self.trained_round)
+                dim1, dim2, dim3, dim4 = weights.shape
+                if self.rank == model_id:
+                    self.count[p][:dim1, :dim2, :dim3, :dim4] += torch.ones((dim1, dim2, dim3, dim4))
+                    self.model_weights[p].data[:dim1, :dim2, :dim3, :dim4] += weights * similarity
+                else:
+                    self.count[p][:dim1, :dim2, :dim3, :dim4] += torch.ones((dim1, dim2, dim3, dim4)) * similarity / float(self.trained_round)
+                    self.model_weights[p].data[:dim1, :dim2, :dim3, :dim4] += weights * similarity / float(
+                        self.trained_round)
             else:
                 raise Exception(f"does not support dim {self.model_weights[p].data.dim()}")
         if model_id == self.rank:
@@ -296,9 +327,10 @@ class SuperModel:
             self.trained_round += 1
             for p in self.model_weights:
                 d_type = self.model_weights[p].data.dtype
-                self.model_weights[p].data = torch.div(
-                    self.model_weights[p].data,
-                    self.count[p].to(dtype=d_type)).to(dtype=d_type)
+                if self.count[p] != torch.tensor(0):
+                    self.model_weights[p].data = torch.div(
+                        self.model_weights[p].data,
+                        self.count[p].to(dtype=d_type)).to(dtype=d_type)
             for l in self.model_grads_buffer:
                 if self.gradient_in_update > 0:
                     logging.info(f"get {self.gradient_in_update} gradients")
@@ -440,8 +472,8 @@ class SuperModel:
         children, parents, bns, ln_children, ln_parents = self.get_widen_instruction(node_id)
         node = self.dag.nodes()[node_id]['attr']
         if len(children) == 0 and len(ln_children) == 0:
-            print(f'fail to widen {node.name} as it is the last layer')
-            return []
+            logging.info(f'fail to widen {node.name} as it is the last layer')
+            return new_model
         if node.operator == 'Gemm':
             ln_parents.append(node_id)
         elif node_id not in parents:
@@ -501,10 +533,12 @@ class SuperModel:
                 scaled_layer.add(layer)
         for layer in widen_layers:
             logging.info(f'widenning layer {layer}')
+            # print(f'widenning layer {layer}')
             node_id = self.layername2id[layer]
             new_model = self.widen_layer(node_id, new_model)
         for layer in deepen_layers:
             logging.info(f"deepening layer {layer}")
+            # print(f'widenning layer {layer}')
             node_id = self.layername2id[layer]
             new_model = self.deepen_layer(node_id, new_model)
         logging.info(new_model)
@@ -562,9 +596,99 @@ class Model_Manager():
         return self.models[-1].torch_model
     
     def model_scale(self):
-        layers = self.models[-1].select_layers_by_gradient()
-        new_model, last_scaled_layer = self.models[-1].model_scale(layers)
-        self.models.append(SuperModel(new_model, self.args, len(self.models), last_scaled_layer))
+        super_model = self.models[-1]
+
+        assert isinstance(super_model, SuperModel)
+
+        layers = super_model.select_layers_by_gradient()
+        new_model, last_scaled_layer = super_model.model_scale(layers)
+
+        new_super_model = SuperModel(new_model, self.args, len(self.models), last_scaled_layer)
+        new_inherit = self.generate_inherit(new_super_model, super_model)
+
+        new_super_model.load_inherit(new_inherit)
+
+        self.models.append(new_super_model)
+
+    def random_scale(self):
+        super_model = self.models[-1]
+
+        assert isinstance(super_model, SuperModel)
+
+        import random
+        layers = random.sample(super_model.get_weighted_layers(), k=2)
+        layers = [layer[1] for layer in layers]
+        new_model, last_scaled_layer = super_model.model_scale(layers)
+
+        new_super_model = SuperModel(new_model, self.args, len(self.models), last_scaled_layer)
+        new_inherit = self.generate_inherit(new_super_model, super_model)
+        print(f"model{len(self.models)}: {new_inherit}")
+        new_super_model.load_inherit(new_inherit)
+
+        self.models.append(new_super_model)
+
+    def get_similarity(self, i: int, j: int):
+        larger = max([i, j])
+        smaller = min([i, j])
+
+        inherit = self.models[larger].inherit
+
+        similarity = 0
+        for layer_name in inherit:
+            rank = inherit[layer_name]
+            if rank <= smaller:
+                score = self.get_layer_score(layer_name, self.models[smaller], self.models[larger])
+                similarity += score
+            else:
+                similarity += -1
+
+        return max([0, similarity])
+
+    def get_layer_score(self, layer_name: str, small_model: SuperModel, large_model: SuperModel):
+        small_layers = small_model.get_weighted_layers()
+        large_weight = get_model_layer_weight(large_model.torch_model, layer_name)
+        small_weight = None
+        for layer in small_layers:
+            if layer[1] in layer_name:
+                small_weight = get_model_layer_weight(small_model.torch_model, layer[1])
+        assert small_weight is not None
+        assert len(large_weight.shape) == len(small_weight.shape)
+        return self.get_params(small_weight) / self.get_params(large_weight)
+
+    def get_params(self, large_weight):
+        num_params = 1
+        for dim in large_weight.shape:
+            num_params *= dim
+        return num_params
+
+    def generate_inherit(self, new_super_model, super_model):
+        layers = super_model.get_weighted_layers()
+        layer_names = [layer[1] for layer in layers]
+        new_layers = new_super_model.get_weighted_layers()
+        new_layer_names = [layer[1] for layer in new_layers]
+        inherit = super_model.inherit
+        new_inherit = {}
+        missed_layers = []
+        for new_layer in new_layers:
+            if new_layer[1] in layer_names:
+                new_inherit[new_layer[1]] = inherit[new_layer[1]]
+            else:
+                missed_layers.append(new_layer)
+        # print(missed_layers)
+        assert len(missed_layers) % 2 == 0
+        for missed_layer in missed_layers:
+            if missed_layer[1][-1] != '0':
+                new_inherit[missed_layer[1]] = len(self.models)
+                continue
+            missed_layer_name = missed_layer[1]
+            inherit_rank = -1
+            for layer_name in layer_names:
+                if layer_name + '.0' == missed_layer_name:
+                    inherit_rank = inherit[layer_name]
+            new_inherit[missed_layer_name] = inherit_rank
+            if inherit_rank == -1:
+                raise Exception
+        return new_inherit
 
     def model_shrink(self, ratio: float=0.5):
         new_model = self.models[-1].model_shrink()
@@ -595,7 +719,8 @@ class Model_Manager():
                 self.models[model_id] = None
         else:
             for idx, model in enumerate(self.models):
-                model.soft_weight_aggregation(results, model_id)
+                similarity = self.get_similarity(model_id, idx)
+                model.soft_weight_aggregation(results, model_id, similarity)
                 if model.converged:
                     model.terminate()
                     self.models[idx] = None
