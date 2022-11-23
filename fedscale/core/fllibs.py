@@ -229,7 +229,7 @@ def init_model():
             elif args.model_zoo == "torchcv":
                 model = tormodels.__dict__[args.model](
                     num_classes=outputClass[args.data_set])
-            elif args.model_zpp == "evofed-zoo":
+            elif args.model_zoo == "evofed-zoo":
                 if args.model == "nasbench201_0":
                     config = {
                         'name': 'infer.tiny',

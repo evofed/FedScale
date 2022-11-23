@@ -43,7 +43,7 @@ job_conf:
     - device_avail_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_behave_trace
     - device_cap_file: $FEDSCALE_HOME/benchmark/device_cap/femnist_cap/resnet18-uniform.csv
     - model: nasbench201_0                            # Models: e.g., shufflenet_v2_x2_0, mobilenet_v2, resnet34, albert-base-v2
-    - model_name: model_19
+    - model_name: None
     - model_zoo: evofed-zoo
     - gradient_policy: fed-avg                 # {"fed-yogi", "fed-prox", "fed-avg"}, "fed-avg" by default
     - eval_interval: 20                     # How many rounds to run a testing on the testing set
@@ -57,7 +57,7 @@ job_conf:
     - use_cuda: True
     - candidate_capacity: 1
     - convergent_threshold: 0.0001
-    - transform_threshold: 0
+    - transform_threshold: 0.001
     - window_N: 10
     - step_M: 100
     - gradient_buffer_length: 5
@@ -66,5 +66,5 @@ job_conf:
     - selected_ratio: 0.9
     - step_M: 100
     - window_N: 10
-    - soft_agg: False
+    - soft_agg: True
     # - selected_layers: cells.1.downsample.1.0.0,cells.1.downsample.1.2.0

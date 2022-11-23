@@ -1,5 +1,6 @@
 import torchvision.models as models
 from fedscale.utils.models.specialized.resnet_speech import resnet34
+from fedscale.utils.models.evofed.small_resnet18 import small_resnet18
 import os
 from thop import profile
 import numpy as np
@@ -13,17 +14,19 @@ outputClass = {'Mnist': 10, 'cifar10': 10, "imagenet": 1000, 'emnist': 47, 'amaz
                }
 
 dataset_info = {
-    'femnist': (1, 3, 28, 28)
-    # 'openimage': (1, 3, 256, 256),
+    # 'femnist': (1, 3, 28, 28),
+    'openimage': (1, 3, 256, 256)
     # 'speech': (32, 32)
 }
 
 model_zoo = {
-    'resnet18': models.resnet18(),
+    # 'resnet18': models.resnet18(),
     # 'resnet34': resnet34(num_classes=outputClass['google_speech'], in_channels=1),
+    'resnet34': models.resnet34(),
     'shufflenet': models.shufflenet_v2_x2_0(),
     # 'mobilenet': models.mobilenet_v2(),
-    'nasbench': nasbench.get_cell_based_tiny_net(config)
+    # 'nasbench': nasbench.get_cell_based_tiny_net(config)
+    'small_resnet': small_resnet18(num_classes=outputClass['openImg'])
 }
 
 n_client = 500000
@@ -32,11 +35,11 @@ for dataset in dataset_info:
     if not os.path.exists(dataset):
         os.mkdir(dataset)
     dummy_input = torch.randn(dataset_info[dataset])
-    min_macs, min_params = profile(model_zoo['nasbench'], inputs=(dummy_input, ), verbose=False)
+    min_macs, min_params = profile(model_zoo['small_resnet'], inputs=(dummy_input, ), verbose=False)
     print(f"min MACs: {min_macs}, min params: {min_params}")
-    for model_name in ['resnet18', 'shufflenet']:
-        max_macs, max_params = profile(model_zoo['resnet18'], inputs=(dummy_input, ), verbose=False)
-        print(f"max MACs: {max_macs}, max MACs: {max_params}")
+    for model_name in ['resnet34', 'shufflenet']:
+        max_macs, max_params = profile(model_zoo[model_name], inputs=(dummy_input, ), verbose=False)
+        print(f"max MACs: {max_macs}, max params: {max_params}")
         # normal distribution
         client_cap_macs = np.random.normal(loc=(min_macs+max_macs)/2, scale=(min_macs+max_macs)/2/2, size=n_client)
         client_cap_params = np.random.normal(loc=(min_params+max_params)/2, scale=(min_params+max_params)/2/2, size=n_client)
