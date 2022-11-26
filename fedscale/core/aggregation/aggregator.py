@@ -473,6 +473,9 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.global_virtual_clock += self.round_duration
         self.round += 1
 
+        self.model_manager.update_utility()
+
+
         if self.round % self.args.decay_round == 0:
             self.args.learning_rate = max(
                 self.args.learning_rate*self.args.decay_factor, self.args.min_learning_rate)

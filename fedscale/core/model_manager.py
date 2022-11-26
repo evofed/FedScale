@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import sys
 from typing import List, Set
@@ -12,6 +13,7 @@ import torch
 from fedscale.core.logger.aggragation import logDir
 import pickle
 from dataclasses import dataclass
+import numpy as np
 
 omit_operator = ['Identity', 'Constant']
 conflict_operator = ['Add']
@@ -142,6 +144,7 @@ dataset_input = {
 @dataclass
 class ClientRecord:
     training_loss: List[float]
+    utility: float
 
 class SuperModel:
     def __init__(self, torch_model, args, rank, last_scaled_layer: Set=None) -> None:
@@ -154,7 +157,7 @@ class SuperModel:
             self.last_scaled_layer = set()
         else:
             self.last_scaled_layer = last_scaled_layer
-        self.curr_loss = 0
+        self.curr_loss = {}
         self.converged = False
         self.converging = False
         self.model_in_update = 0
@@ -171,6 +174,7 @@ class SuperModel:
         self.count = collections.OrderedDict()
         self.trained_round = 0
         self.inherit = {}
+        self.utilities = defaultdict(int)
         if rank == 0:
             for layer in self.get_weighted_layers():
                 self.inherit[layer[1]] = 0
@@ -183,12 +187,9 @@ class SuperModel:
 
     def is_converged(self):
         return self.converged
-    
-    def set_cur_loss(self, loss):
-        self.curr_loss = loss
 
     def reset_cur_loss(self):
-        self.curr_loss = 0
+        self.curr_loss = {}
     
     def reset_model_in_update(self):
         self.model_in_update = 0
@@ -205,29 +206,26 @@ class SuperModel:
         self.task_round = 0
 
     def normal_weight_aggregation(self, results):
-        self.curr_loss += results['moving_loss']
+
         cap = results['cap']
         client_id = results['clientId']
+        self.curr_loss[client_id] = results['moving_loss']
+
         if client_id not in self.client_records:
             self.client_records[client_id] = ClientRecord([])
+
         self.client_records[client_id].training_loss.append(results['moving_loss'])
         self.model_in_update += 1
+
         for p in results['update_weight']:
             if self.model_in_update == 1:
                 self.model_weights[p].data = results['update_weight'][p]
             else:
                 self.model_weights[p].data += results['update_weight'][p]
-            # aggregate layer gradients
-        if self.gradient_in_update == 0 and cap > self.macs:
-            self.gradient_in_update += 1
-            for l in results['grad_dict']:
-                self.model_grads_buffer[l].append(results['grad_dict'][l])
-        elif cap > self.macs:
-            self.gradient_in_update += 1
-            for l in results['grad_dict']:
-                self.model_grads_buffer[l][-1] += results['grad_dict'][l]
-            if len(self.model_grads_buffer[l]) > self.args.gradient_buffer_length:
-                self.model_grads_buffer[l].pop(0)
+
+        self.update_gradient_buffer(cap, results)
+
+        # aggregate model weights
         if self.model_in_update == self.task_round:
             self.trained_round += 1
             for p in self.model_weights:
@@ -245,48 +243,75 @@ class SuperModel:
             logging.info(f'(DEBUG) gradient buffer of model {self.rank}: {self.model_grads_buffer}')
             logging.info(f'training loss of model {self.rank}: {self.curr_loss}')
 
+    def update_gradient_buffer(self, cap, results):
+        if self.gradient_in_update == 0 and cap > self.macs:
+            self.gradient_in_update += 1
+            for l in results['grad_dict']:
+                self.model_grads_buffer[l].append(results['grad_dict'][l])
+        elif cap > self.macs:
+            self.gradient_in_update += 1
+            for l in results['grad_dict']:
+                self.model_grads_buffer[l][-1] += results['grad_dict'][l]
+            if len(self.model_grads_buffer[l]) > self.args.gradient_buffer_length:
+                self.model_grads_buffer[l].pop(0)
+
     def soft_weight_aggregation(self, results, model_id, similarity):
-        self.curr_loss += results['moving_loss']
-        client_id = results['clientId']
-        cap = results['cap']
+        # self.curr_loss += results['moving_loss']
         if model_id > self.rank:
             return
+
         logging.info(f"aggregating model {model_id} into {self.rank}")
+
+        client_id = results['clientId']
+        cap = results['cap']
+
         if client_id not in self.client_records:
-            self.client_records[client_id] = ClientRecord([])
+            self.client_records[client_id] = ClientRecord([], 0)
+
         self.client_records[client_id].training_loss.append(results['moving_loss'])
         self.model_in_update += 1
+
         for p in results['update_weight']:
             weights = results['update_weight'][p]
-            if p not in self.model_weights:
+
+            matched = False
+            for param_name in self.model_weights:
+                param_name_prefix = ".".join(param_name.split('.')[:-1])
+                p_prefix = ".".join(p.split('.')[:-1])
+                param_name_surfix = param_name.split('.')[-1]
+                p_surfix = p.split('.')[-1]
+                if p_prefix in param_name_prefix and p_surfix == param_name_surfix:
+                    if p_prefix != param_name_prefix:
+                        tail = param_name_prefix[:len(p_prefix)]
+                        if tail[1] == '0':
+                            matched = True
+                            p = param_name
+                            break
+                    else:
+                        matched = True
+                        break
+            if not matched:
                 continue
-            if self.model_in_update == 1:
-            # reset model weights and count
+
+            assert p in self.model_weights
+
+            # init count and model weights
+            if self.model_in_update == 1 or p not in self.count:
                 self.model_weights[p].data = torch.zeros_like(self.model_weights[p].data)
                 self.count[p] = torch.zeros_like(self.model_weights[p].data)
-            if p not in self.count:
-                self.model_weights[p].data = torch.zeros_like(self.model_weights[p].data)
-                self.count[p] = torch.zeros_like(self.model_weights[p].data)
+
             if self.model_weights[p].data.dim() == 0:
                 self.count[p] = torch.tensor(0)
                 self.model_weights[p].data = weights
             elif self.model_weights[p].data.dim() == 1:
-                for i in range(weights.shape[0]):
-                    if self.rank == model_id:
-                        self.count[p][i] += 1
-                        self.model_weights[p].data[i] += weights[i]
-                    else:
-                        self.count[p][i] += similarity / float(self.trained_round)
-                        self.model_weights[p].data[i] += weights[i] * similarity / float(self.trained_round)
+                dim1 = weights.shape[0]
+                if self.rank == model_id:
+                    self.count[p][:dim1] += torch.ones(dim1)
+                    self.model_weights[p].data[:dim1] += weights
+                else:
+                    self.count[p][:dim1] += torch.ones(dim1) + similarity / float(self.trained_round)
+                    self.model_weights[p].data[:dim1] += weights * similarity / float(self.trained_round)
             elif self.model_weights[p].data.dim() == 2:
-                # for i in range(weights.shape[0]):
-                #     for j in range(weights.shape[1]):
-                #         if self.rank == model_id:
-                #             self.count[p][i, j] += 1
-                #             self.model_weights[p].data[i, j] += weights[i, j]
-                #         else:
-                #             self.count[p][i, j] += similarity / self.trained_round
-                #             self.model_weights[p].data[i, j] += weights[i, j] * similarity / float(self.trained_round)
                 dim1, dim2 = weights.shape
                 if self.rank == model_id:
                     self.model_weights[p].data[:dim1, :dim2] += weights
@@ -295,56 +320,52 @@ class SuperModel:
                     self.model_weights[p].data[:dim1, :dim2] += weights * similarity / float(self.trained_round)
                     self.count[p][:dim1, :dim2] += torch.ones((dim1, dim2)) * similarity / float(self.trained_round)
             elif self.model_weights[p].data.dim() == 4:
-                # for i in range(weights.shape[0]):
-                #     for j in range(weights.shape[1]):
-                #         for k in range(weights.shape[2]):
-                #             for r in range(weights.shape[3]):
-                #                 if self.rank == model_id:
-                #                     self.count[p][i, j, k, r] += 1.
-                #                     self.model_weights[p].data[i, j, k, r] += weights[i, j, k, r]
-                #                 else:
-                #                     self.count[p][i, j, k, r] += similarity / float(self.trained_round)
-                #                     self.model_weights[p].data[i, j, k, r] += weights[i, j, k, r] * similarity / float(self.trained_round)
                 dim1, dim2, dim3, dim4 = weights.shape
                 if self.rank == model_id:
                     self.count[p][:dim1, :dim2, :dim3, :dim4] += torch.ones((dim1, dim2, dim3, dim4))
                     self.model_weights[p].data[:dim1, :dim2, :dim3, :dim4] += weights * similarity
                 else:
-                    self.count[p][:dim1, :dim2, :dim3, :dim4] += torch.ones((dim1, dim2, dim3, dim4)) * similarity / float(self.trained_round)
+                    self.count[p][:dim1, :dim2, :dim3, :dim4] += torch.ones((dim1, dim2, dim3, dim4)) \
+                                                                 * similarity / float(self.trained_round)
                     self.model_weights[p].data[:dim1, :dim2, :dim3, :dim4] += weights * similarity / float(
                         self.trained_round)
             else:
                 raise Exception(f"does not support dim {self.model_weights[p].data.dim()}")
+
+        # update gradient buffer and current loss if necessary
         if model_id == self.rank:
-            if self.gradient_in_update == 0 and cap > self.macs:
-                self.gradient_in_update += 1
-                for l in results['grad_dict']:
-                    self.model_grads_buffer[l].append(results['grad_dict'][l])
-            elif cap > self.macs:
-                self.gradient_in_update += 1
-                for l in results['grad_dict']:
-                    self.model_grads_buffer[l][-1] += results['grad_dict'][l]
-                if len(self.model_grads_buffer[l]) > self.args.gradient_buffer_length:
-                    self.model_grads_buffer[l].pop(0)
+            self.curr_loss[client_id] = results['moving_loss']
+            self.update_gradient_buffer(cap, results)
+
+        # aggregate weights
         if self.model_in_update == self.task_round:
             self.trained_round += 1
+            # calculate weighted average weights
             for p in self.model_weights:
                 d_type = self.model_weights[p].data.dtype
-                if self.count[p] != torch.tensor(0):
+                if self.count[p].dim() > 0:
                     self.model_weights[p].data = torch.div(
                         self.model_weights[p].data,
                         self.count[p].to(dtype=d_type)).to(dtype=d_type)
+            # calculate average gradient
             for l in self.model_grads_buffer:
                 if self.gradient_in_update > 0:
                     logging.info(f"get {self.gradient_in_update} gradients")
                     self.model_grads_buffer[l][-1] = (
                         self.model_grads_buffer[l][-1] / float(self.gradient_in_update)
                     )
-            self.curr_loss /= self.task_round
+            self.standardize_loss()
             self.train_loss_buffer.append(self.curr_loss)
             self.check_convergence()
             logging.info(f'training loss of model {self.rank}: {self.curr_loss}')
 
+    def standardize_loss(self):
+        cur_loss_list = np.array([self.cur_loss[client_id] for client_id in self.curr_loss])
+        for client_id in self.curr_loss:
+            self.curr_loss[client_id] = (self.curr_loss[client_id] - np.mean(cur_loss_list)) / np.std(cur_loss_list)
+        # DEBUG
+        logging.info(f"log standardized loss {self.curr_loss}")
+        return np.mean(cur_loss_list)
 
     def check_convergence(self):
         if len(self.train_loss_buffer) > self.args.window_N + self.args.step_M:
@@ -577,6 +598,7 @@ class Model_Manager():
         self.models = []
         self.args = args
         self.add_model(init_model)
+        self.similarities = [[1]]
 
     def add_model(self, torch_model):
         self.models.append(SuperModel(torch_model, self.args, len(self.models), set()))
@@ -613,6 +635,11 @@ class Model_Manager():
 
         self.models.append(new_super_model)
 
+        self.similarities.append([])
+
+        # update similarity
+        self.update_similarities()
+
     def random_scale(self):
         super_model = self.models[-1]
 
@@ -629,6 +656,17 @@ class Model_Manager():
         new_super_model.load_inherit(new_inherit)
 
         self.models.append(new_super_model)
+
+        self.similarities.append([])
+
+        self.update_similarities()
+
+    def update_similarities(self):
+        self.similarities = []
+        for i in range(len(self.models)):
+            self.similarities.append([])
+            for j in range(len(self.models)):
+                self.similarities[-1].append(self.get_similarity(i, j))
 
     def get_similarity(self, i: int, j: int):
         larger = max([i, j])
@@ -775,7 +813,7 @@ class Model_Manager():
             if super_model:
                 super_model.reset_task()
     
-    def assign_tasks(self, clients_to_run, clients_cap):
+    def assign_tasks_hardware(self, clients_to_run, clients_cap):
         assignment = {}
         model_training = set()
         self.reset_tasks()
@@ -800,6 +838,63 @@ class Model_Manager():
         logging.info(f"MACs of outstanding models {self.get_all_macs()}")
         logging.info(f"MACs of selected clients {clients_cap}")
         return assignment, list(model_training)
+
+    def assign_tasks_hybrid(self, clients_to_run, clients_cap):
+        assignment = {}
+        model_training = set()
+        for client_id in clients_to_run:
+            candidate_models = []
+            for model_id, super_model in enuemrate(self.models):
+                assert isinstance(super_model, SuperModel)
+                if super_model.macs <= clients_cap[client_id]:
+                    candidate_models.append([model_id, super_model])
+            if len(candidate_models) == 0:
+                assignment[client_id] = 0
+                model_training.add(0)
+                break
+            else:
+                utilities = {}
+                for model_id, super_model in candidate_models:
+                    utilities[model_id] = super_model.utilities[client_id]
+                # normalize utility
+                base = .0
+                for model_id in utilities:
+                    base += math.exp(utilities[model_id])
+                for model_id in utilities:
+                    utilities[model_id] /= base
+                # generate probabilities
+                utilities_list = [[model_id, utilities[model_id]] for model_id in utilities]
+                models_id = []
+                probabilities = []
+                for model_id, probability in utilities_list:
+                    models_id.append(model_id)
+                    probabilities.append(probability)
+                decision = np.random.multinomial(1, probabilities)
+                assert sum(decision) == 0
+                for model_id, d in zip(models_id, decision):
+                    if d == 1:
+                        assignment[client_id] = models_id
+                        break
+
+
+
+
+
+    def update_utility(self, assignment, clients_cap):
+        for client_id in assignment:
+            model_id = assignment[client_id]
+            loss = self.models[model_id].cur_loss[client_id]
+            candidate_models = []
+            client_cap = clients_cap[client_id]
+            for idx, super_model in enumerate(self.models):
+                assert isinstance(super_model, SuperModel)
+                if super_model.macs <= client_cap:
+                    candidate_models.append([idx, super_model])
+            if len(candidate_models) == 0:
+                candidate_models = [[model_id, self.models[model_id]]]
+            for candidate_model in candidate_models:
+                reward = loss * self.similarities[model_id][candidate_model[0]]
+                candidate_model[1].utilities[client_id] += reward
 
     def get_all_models(self):
         models = []
