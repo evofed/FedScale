@@ -120,14 +120,19 @@ class Executor(object):
         training_sets.partition_data_helper(
             num_clients=self.args.num_participants, data_map_file=self.args.data_map_file)
 
-        testing_sets = DataPartitioner(
+        client_testing_sets = DataPartitioner(
             data=test_dataset, args=self.args, numOfClass=self.args.num_class, isTest=True)
-        testing_sets.partition_data_helper(
+        client_testing_sets.partition_data_helper(
             num_clients=self.args.num_participants, data_map_file=self.args.test_data_map_file)
 
-        assert len(testing_sets.getSize()) == len(training_sets.getSize())
+        server_testing_sets = DataPartitioner(
+            data=test_dataset, args=self.args, numOfClass=self.args.num_class, isTest=True)
+        server_testing_sets.partition_data_helper(
+                num_clients=self.num_executors)
 
-        self.n_clients = len(testing_sets.getSize()['size'])
+        assert len(client_testing_sets.getSize()) == len(training_sets.getSize())
+
+        self.n_clients = len(client_testing_sets.getSize()['size'])
 
         if self.this_rank != self.num_executors:
             self.client_partition = list(range(
@@ -148,14 +153,14 @@ class Executor(object):
         elif self.task == 'voice':
             self.collate_fn = voice_collate_fn
 
-        return training_sets, testing_sets
+        return training_sets, client_testing_sets, server_testing_sets
 
     def run(self):
         """Start running the executor by setting up execution and communication environment, and monitoring the grpc message.
         """
         self.setup_env()
         self.model = [self.init_model()]
-        self.training_sets, self.testing_sets = self.init_data()
+        self.training_sets, self.client_testing_sets, self.server_testing_sets = self.init_data()
         self.setup_communication()
         self.event_monitor()
 
@@ -262,6 +267,8 @@ class Executor(object):
         self.model = model
         self.round += 1
 
+        # logging.info(f"get model {self.model[0].state_dict()} from the server")
+
         # Dump latest model to disk
         with open(self.temp_model_path, 'wb') as model_out:
             pickle.dump(self.model, model_out)
@@ -358,11 +365,14 @@ class Executor(object):
             test_res = client.test(args, self.this_rank, model, device=device)
             _, _, _, testResults = test_res
         else:
-            for client_id in self.client_partition:
-                data_loader = select_dataset(client_id, self.testing_sets,
-                                             batch_size=args.test_bsz, args=args,
-                                             isTest=True, collate_fn=self.collate_fn
-                                             )
+            if self.round % self.args.client_eval_interval == 0:
+                all_test_results = self.client_testing(args, model_id, evalStart, device, model)
+            else:
+                all_test_results = []
+                data_loader = select_dataset(self.this_rank, self.server_testing_sets,
+                                         batch_size=args.test_bsz, args=args,
+                                         isTest=True, collate_fn=self.collate_fn
+                                         )
 
                 if self.task == 'voice':
                     criterion = CTCLoss(reduction='mean').to(device=device)
@@ -370,17 +380,41 @@ class Executor(object):
                     criterion = torch.nn.CrossEntropyLoss().to(device=device)
 
                 if self.args.engine == commons.PYTORCH:
-                    test_res = test_model(client_id, model, data_loader,
-                                          device=device, criterion=criterion, tokenizer=tokenizer)
+                    test_res = test_model(self.this_rank, model, data_loader,
+                                        device=device, criterion=criterion, tokenizer=tokenizer)
                 else:
                     raise Exception(f"Need customized implementation for model testing in {self.args.engine} engine")
 
                 test_loss, acc, acc_5, testResults = test_res
-                logging.info("Client {} at model {}: After aggregation round {}, CumulTime {}, eval_time {}, test_loss {}, test_accuracy {:.2f}%, test_5_accuracy {:.2f}% \n"
-                             .format(client_id, model_id, self.round, round(time.time() - self.start_run_time, 4), round(time.time() - evalStart, 4), test_loss, acc*100., acc_5*100.))
+                logging.info("After aggregation round {}, CumulTime {}, eval_time {}, test_loss {}, test_accuracy {:.2f}%, test_5_accuracy {:.2f}% \n"
+                            .format(self.round, round(time.time() - self.start_run_time, 4), round(time.time() - evalStart, 4), test_loss, acc*100., acc_5*100.))
                 all_test_results.append(testResults)
         gc.collect()
 
+        return all_test_results
+
+    def client_testing(self, args, model_id, evalStart, device, model):
+        all_test_results = []
+        for client_id in self.client_partition:
+            data_loader = select_dataset(client_id, self.client_testing_sets,
+                                             batch_size=args.test_bsz, args=args,
+                                             isTest=True, collate_fn=self.collate_fn
+                                             )
+            if self.task == 'voice':
+                criterion = CTCLoss(reduction='mean').to(device=device)
+            else:
+                criterion = torch.nn.CrossEntropyLoss().to(device=device)
+
+            if self.args.engine == commons.PYTORCH:
+                test_res = test_model(client_id, model, data_loader,
+                                          device=device, criterion=criterion, tokenizer=tokenizer)
+            else:
+                raise Exception(f"Need customized implementation for model testing in {self.args.engine} engine")
+
+            test_loss, acc, acc_5, testResults = test_res
+            logging.info("Client {} at model {}: After aggregation round {}, CumulTime {}, eval_time {}, test_loss {}, test_accuracy {:.2f}%, test_5_accuracy {:.2f}% \n"
+                             .format(client_id, model_id, self.round, round(time.time() - self.start_run_time, 4), round(time.time() - evalStart, 4), test_loss, acc*100., acc_5*100.))
+            all_test_results.append(testResults)
         return all_test_results
 
     def client_register(self):

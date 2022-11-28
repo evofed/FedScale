@@ -188,7 +188,7 @@ class SuperModel:
     def is_converged(self):
         return self.converged
 
-    def reset_cur_loss(self):
+    def reset_curr_loss(self):
         self.curr_loss = {}
     
     def reset_model_in_update(self):
@@ -212,7 +212,7 @@ class SuperModel:
         self.curr_loss[client_id] = results['moving_loss']
 
         if client_id not in self.client_records:
-            self.client_records[client_id] = ClientRecord([])
+            self.client_records[client_id] = ClientRecord([], 0)
 
         self.client_records[client_id].training_loss.append(results['moving_loss'])
         self.model_in_update += 1
@@ -237,7 +237,7 @@ class SuperModel:
                     logging.info(f"get {self.gradient_in_update} gradients")
                     self.model_grads_buffer[l][-1] = (
                             self.model_grads_buffer[l][-1] / float(self.gradient_in_update))
-            self.curr_loss = self.curr_loss / self.task_round
+            # self.curr_loss = self.curr_loss / self.task_round
             self.train_loss_buffer.append(self.curr_loss)
             self.check_convergence()
             logging.info(f'(DEBUG) gradient buffer of model {self.rank}: {self.model_grads_buffer}')
@@ -259,6 +259,8 @@ class SuperModel:
         # self.curr_loss += results['moving_loss']
         if model_id > self.rank:
             return
+        
+        logging.info(f"{type(model_id)}")
 
         logging.info(f"aggregating model {model_id} into {self.rank}")
 
@@ -268,10 +270,20 @@ class SuperModel:
         if client_id not in self.client_records:
             self.client_records[client_id] = ClientRecord([], 0)
 
+        if math.isnan(results['moving_loss']):
+            logging.info(f"unexpected training loss {results['moving_loss']}")
+            logging.info(f"skip aggregation")
+            self.task_round -= 1
+            self.weighted_average_weights()
+
+
         self.client_records[client_id].training_loss.append(results['moving_loss'])
         self.model_in_update += 1
 
+        # logging.info(f"(DEBUG) tasks required on model {self.rank}: {self.task_round}")
         for p in results['update_weight']:
+            d_type = self.model_weights[p].data.dtype
+
             weights = results['update_weight'][p]
 
             matched = False
@@ -297,8 +309,8 @@ class SuperModel:
 
             # init count and model weights
             if self.model_in_update == 1 or p not in self.count:
-                self.model_weights[p].data = torch.zeros_like(self.model_weights[p].data)
                 self.count[p] = torch.zeros_like(self.model_weights[p].data)
+                self.model_weights[p].data = torch.zeros_like(self.model_weights[p].data)
 
             if self.model_weights[p].data.dim() == 0:
                 self.count[p] = torch.tensor(0)
@@ -309,26 +321,26 @@ class SuperModel:
                     self.count[p][:dim1] += torch.ones(dim1)
                     self.model_weights[p].data[:dim1] += weights
                 else:
-                    self.count[p][:dim1] += torch.ones(dim1) + similarity / float(self.trained_round)
-                    self.model_weights[p].data[:dim1] += weights * similarity / float(self.trained_round)
+                    self.count[p][:dim1] += torch.ones(dim1) * similarity / float(self.trained_round)
+                    self.model_weights[p].data[:dim1] += (weights * similarity / float(self.trained_round)).to(dtype=d_type)
             elif self.model_weights[p].data.dim() == 2:
                 dim1, dim2 = weights.shape
                 if self.rank == model_id:
-                    self.model_weights[p].data[:dim1, :dim2] += weights
                     self.count[p][:dim1, :dim2] += torch.ones((dim1, dim2))
+                    self.model_weights[p].data[:dim1, :dim2] += weights
                 else:
-                    self.model_weights[p].data[:dim1, :dim2] += weights * similarity / float(self.trained_round)
                     self.count[p][:dim1, :dim2] += torch.ones((dim1, dim2)) * similarity / float(self.trained_round)
+                    self.model_weights[p].data[:dim1, :dim2] += (weights * similarity / float(self.trained_round)).to(dtype=d_type)
             elif self.model_weights[p].data.dim() == 4:
                 dim1, dim2, dim3, dim4 = weights.shape
                 if self.rank == model_id:
                     self.count[p][:dim1, :dim2, :dim3, :dim4] += torch.ones((dim1, dim2, dim3, dim4))
-                    self.model_weights[p].data[:dim1, :dim2, :dim3, :dim4] += weights * similarity
+                    self.model_weights[p].data[:dim1, :dim2, :dim3, :dim4] += weights
                 else:
                     self.count[p][:dim1, :dim2, :dim3, :dim4] += torch.ones((dim1, dim2, dim3, dim4)) \
                                                                  * similarity / float(self.trained_round)
-                    self.model_weights[p].data[:dim1, :dim2, :dim3, :dim4] += weights * similarity / float(
-                        self.trained_round)
+                    self.model_weights[p].data[:dim1, :dim2, :dim3, :dim4] += (weights * similarity / float(
+                        self.trained_round)).to(dtype=d_type)
             else:
                 raise Exception(f"does not support dim {self.model_weights[p].data.dim()}")
 
@@ -338,6 +350,9 @@ class SuperModel:
             self.update_gradient_buffer(cap, results)
 
         # aggregate weights
+        self.weighted_average_weights()
+
+    def weighted_average_weights(self):
         if self.model_in_update == self.task_round:
             self.trained_round += 1
             # calculate weighted average weights
@@ -360,12 +375,12 @@ class SuperModel:
             logging.info(f'training loss of model {self.rank}: {self.curr_loss}')
 
     def standardize_loss(self):
-        cur_loss_list = np.array([self.cur_loss[client_id] for client_id in self.curr_loss])
+        curr_loss_list = np.array([self.curr_loss[client_id] for client_id in self.curr_loss])
         for client_id in self.curr_loss:
-            self.curr_loss[client_id] = (self.curr_loss[client_id] - np.mean(cur_loss_list)) / np.std(cur_loss_list)
+            self.curr_loss[client_id] = (self.curr_loss[client_id] - np.mean(curr_loss_list)) / np.std(curr_loss_list)
         # DEBUG
         logging.info(f"log standardized loss {self.curr_loss}")
-        return np.mean(cur_loss_list)
+        return np.mean(curr_loss_list)
 
     def check_convergence(self):
         if len(self.train_loss_buffer) > self.args.window_N + self.args.step_M:
@@ -747,10 +762,10 @@ class Model_Manager():
         return model_weights
         
 
-    def reset_all_cur_loss(self):
+    def reset_all_curr_loss(self):
         for super_model in self.models:
             if super_model:
-                super_model.reset_cur_loss()
+                super_model.reset_curr_loss()
 
     def weight_aggregation(self, results, model_id):
         if not self.args.soft_agg:
@@ -760,6 +775,8 @@ class Model_Manager():
                 self.models[model_id] = None
         else:
             for idx, model in enumerate(self.models):
+                assert isinstance(model, SuperModel)
+                # model.assign_task()
                 similarity = self.get_similarity(model_id, idx)
                 model.soft_weight_aggregation(results, model_id, similarity)
                 if model.converged:
@@ -842,9 +859,10 @@ class Model_Manager():
     def assign_tasks_hybrid(self, clients_to_run, clients_cap):
         assignment = {}
         model_training = set()
+        self.reset_tasks()
         for client_id in clients_to_run:
             candidate_models = []
-            for model_id, super_model in enuemrate(self.models):
+            for model_id, super_model in enumerate(self.models):
                 assert isinstance(super_model, SuperModel)
                 if super_model.macs <= clients_cap[client_id]:
                     candidate_models.append([model_id, super_model])
@@ -856,12 +874,15 @@ class Model_Manager():
                 utilities = {}
                 for model_id, super_model in candidate_models:
                     utilities[model_id] = super_model.utilities[client_id]
+                    if utilities[model_id] == 0:
+                        utilities[model_id] = 0.1
                 # normalize utility
                 base = .0
                 for model_id in utilities:
                     base += math.exp(utilities[model_id])
                 for model_id in utilities:
-                    utilities[model_id] /= base
+                    utilities[model_id] = math.exp(utilities[model_id]) / base
+                logging.info(f"normalized utility for client {client_id}: {utilities}")
                 # generate probabilities
                 utilities_list = [[model_id, utilities[model_id]] for model_id in utilities]
                 models_id = []
@@ -869,21 +890,32 @@ class Model_Manager():
                 for model_id, probability in utilities_list:
                     models_id.append(model_id)
                     probabilities.append(probability)
+                logging.info(f"soft clustering probabilities {probabilities}")
                 decision = np.random.multinomial(1, probabilities)
-                assert sum(decision) == 0
+                assert sum(decision) == 1
                 for model_id, d in zip(models_id, decision):
                     if d == 1:
-                        assignment[client_id] = models_id
+                        assignment[client_id] = model_id
+                        model_training.add(model_id)
                         break
 
-
-
-
-
-    def update_utility(self, assignment, clients_cap):
         for client_id in assignment:
             model_id = assignment[client_id]
-            loss = self.models[model_id].cur_loss[client_id]
+            for super_model in self.models[:model_id+1]:
+                assert isinstance(super_model, SuperModel)
+                super_model.assign_one_task()
+        
+        # DEBUG
+        for super_model in self.models:
+            assert isinstance(super_model, SuperModel)
+            logging.info(f"model {super_model.rank} has {super_model.task_round} tasks")      
+        return assignment, model_training
+
+    def update_utility(self, assignment, clients_cap):
+        logging.info(f"Updating clients' utilities on each model")
+        for client_id in assignment:
+            model_id = assignment[client_id]
+            loss = self.models[model_id].curr_loss[client_id]
             candidate_models = []
             client_cap = clients_cap[client_id]
             for idx, super_model in enumerate(self.models):
@@ -891,10 +923,15 @@ class Model_Manager():
                 if super_model.macs <= client_cap:
                     candidate_models.append([idx, super_model])
             if len(candidate_models) == 0:
+                logging.info(f"no candidate model for client {client_id}, using the default model (0)")
                 candidate_models = [[model_id, self.models[model_id]]]
+                continue
+            logging.info(f"calculating utility for client on {len(candidate_models)} models")
             for candidate_model in candidate_models:
                 reward = loss * self.similarities[model_id][candidate_model[0]]
+                logging.info(f"Reward of client {client_id} model {candidate_model[1].rank} {reward}")
                 candidate_model[1].utilities[client_id] += reward
+                logging.info(f"Utility of client {client_id} model {candidate_model[1].rank} {candidate_model[1].utilities[client_id]}")
 
     def get_all_models(self):
         models = []
@@ -924,6 +961,44 @@ class Model_Manager():
             if super_model:
                 size += super_model.model_update_size
         return size
+
+    def check_status(self):
+        # checking the status of each super models
+        # is_converging, converged, trained rounds, gradient buffer length, utilities, similarity
+        logging.info(f"(MODEL MANAGER STATUS) #models: {len(self.models)}")
+        # check is_converging:
+        is_converging_models = []
+        for super_model in self.models:
+            isinstance(super_model, SuperModel)
+            if super_model.is_converging:
+                is_converging_models.append(super_model.rank)
+        logging.info(f"(MODEL MANAGER STATUS) #converging models {len(is_converging_models)}: {is_converging_models}")
+        # check is_converged:
+        is_converged_models = []
+        for super_model in self.models:
+            assert isinstance(super_model, SuperModel)
+            if super_model.is_converged:
+                is_converged_models.append(super_model.rank)
+        logging.info(f"(MODEL MANAGER STATUS) #converged models {len(is_converged_models)}: {is_converged_models}")
+        # check similarities:
+        for idx, model_similarity in enumerate(self.similarities):
+            logging.info(f"(MODEL MANAGER STATUS) similarity of model {idx}: {model_similarity}")
+        # trained rounds:
+        for super_model in self.models:
+            assert isinstance(super_model, SuperModel)
+            logging.info(f"(MODEL MANAGER STATUS) trained rounds of model {super_model.rank}: {super_model.trained_round}")
+        # gradient_buffer_length:
+        for super_model in self.models:
+            assert isinstance(super_model, SuperModel)
+            logging.info(f"(MODEL MANAGER STATUS) length of gradient buffer of model {super_model.rank}: {len(super_model.model_grads_buffer)}")
+        # utilities:
+        for super_model in self.models:
+            assert isinstance(super_model, SuperModel)
+            logging.info(f"(MODEL MANAGER STATUS) utilities of model {super_model.rank}: {super_model.utilities}")
+        # curr_loss:
+        for super_model in self.models:
+            assert isinstance(super_model, SuperModel)
+            logging.info(f"(MODEL MANAGER STATUS) normalized loss of model {super_model.rank}: {super_model.curr_loss}")
 
     def aggregate_weights(self, weights_param, comming_weights_param, model_id, comming_model_id, device, is_init: bool=False):
         """

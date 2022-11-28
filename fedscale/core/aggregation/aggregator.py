@@ -288,7 +288,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             if len(self.registered_executor_info) == len(self.executors):
                 self.client_register_handler(executorId, info)
 
-                self.model_manager.reset_all_cur_loss()
+                self.model_manager.reset_all_curr_loss()
 
                 self.round_completion_handler()
         else:
@@ -296,7 +296,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             self.client_register_handler(executorId, info)
             if len(self.registered_executor_info) == len(self.executors):
 
-                self.model_manager.reset_all_cur_loss()
+                self.model_manager.reset_all_curr_loss()
 
                 self.round_completion_handler()
     
@@ -470,11 +470,14 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         """Triggered upon the round completion, it registers the last round execution info,
         broadcast new tasks for executors and select clients for next round.
         """
+        self.model_manager.check_status()
+
+        if self.round > 1:
+            logging.info(f"{self.round}")
+            self.model_manager.update_utility(self.mapped_models, self.current_clients_cap)
+
         self.global_virtual_clock += self.round_duration
         self.round += 1
-
-        self.model_manager.update_utility()
-
 
         if self.round % self.args.decay_round == 0:
             self.args.learning_rate = max(
@@ -504,18 +507,21 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         if self.model_manager.is_converging():
             logging.info("FL Transforming")
             self.transform_model()
-        self.model_manager.reset_all_cur_loss()
+        self.model_manager.reset_all_curr_loss()
 
         # update select participants
         self.sampled_participants = self.select_participants(
             select_num_participants=self.args.num_participants, overcommitment=self.args.overcommitment)
         (clientsToRun, round_stragglers, virtual_client_clock, round_duration, flatten_client_duration, clients_cap) = self.tictak_client_tasks(
             self.sampled_participants, self.args.num_participants)
+        
+        self.current_clientsToRun = clientsToRun
+        self.current_clients_cap = clients_cap
 
         logging.info(f"Selected participants to run: {clientsToRun}")
         # Issue requests to the resource manager; Tasks ordered by the completion time
+        self.mapped_models, self.model_in_training = self.model_manager.assign_tasks_hybrid(clientsToRun, clients_cap)
         self.resource_manager.register_tasks(clientsToRun)
-        self.mapped_models, self.model_in_training = self.model_manager.assign_tasks(clientsToRun, clients_cap)
         logging.info(f"model(s) {self.model_in_training} will be trained in the next round")
         logging.info(f"model assignment: {self.mapped_models}")
         self.tasks_round = len(clientsToRun)
@@ -735,7 +741,9 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             PyTorch or TensorFlow module: Based on the executor's machine learning framework, initialize and return the model for training.
 
         """
-        return self.model_manager.get_all_models()
+        models = self.model_manager.get_all_models()
+        # logging.info(f"upload model {models[0].state_dict()} to client")
+        return models
 
     def get_shutdown_config(self, client_id):
         """Shutdown config for client, developers can further define personalized client config here.

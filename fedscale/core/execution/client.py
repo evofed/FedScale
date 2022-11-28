@@ -67,6 +67,9 @@ class Client(object):
                    'trained_size': self.completed_steps*conf.batch_size, 'success': self.completed_steps > 0}
         results['utility'] = math.sqrt(
             self.loss_squre)*float(trained_unique_samples)
+        
+        if math.isnan(results['moving_loss']):
+            logging.info(f"training crash with model {state_dicts}")
 
         # get layer gradient
         grad_dict = dict()
@@ -233,6 +236,7 @@ class Client(object):
             # ========= Define the backward loss ==============
             optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
             optimizer.step()
 
             # ========= Weight handler ========================
