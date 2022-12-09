@@ -69,7 +69,7 @@ class Client(object):
             self.loss_squre)*float(trained_unique_samples)
         
         if math.isnan(results['moving_loss']):
-            logging.info(f"training crash with model {state_dicts}")
+            logging.info(f"training crash at client {clientId}")
 
         # get layer gradient
         grad_dict = dict()
@@ -144,6 +144,7 @@ class Client(object):
 
     def train_step(self, client_data, conf, model, optimizer, criterion):
 
+        data_id = 0
         for data_pair in client_data:
             if conf.task == 'nlp':
                 (data, _) = data_pair
@@ -223,6 +224,8 @@ class Client(object):
                 loss = loss.mean()
 
             temp_loss = sum(loss_list)/float(len(loss_list))
+            if math.isnan(temp_loss):
+                logging.info(f"training crash at data sample {data_id}")
             self.loss_squre = sum([l**2 for l in loss_list]
                                 )/float(len(loss_list))
             # only measure the loss of the first epoch
@@ -244,7 +247,7 @@ class Client(object):
                 conf, model, self.global_model if self.global_model is not None else None)
 
             self.completed_steps += 1
-
+            data_id += 1
             if self.completed_steps == conf.local_steps:
                 break
 

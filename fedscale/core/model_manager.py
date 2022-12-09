@@ -172,12 +172,15 @@ class SuperModel:
         self.model_update_size = sys.getsizeof(pickle.dumps(torch_model)) // 1024.0 * 8.0
         self.client_records = {}
         self.count = collections.OrderedDict()
-        self.trained_round = 0
+        self.trained_round = 1
         self.inherit = {}
         self.utilities = defaultdict(int)
         if rank == 0:
             for layer in self.get_weighted_layers():
                 self.inherit[layer[1]] = 0
+    
+    def load_utilities(self, utilities: dict):
+        self.utilities = deepcopy(utilities)
 
     def load_inherit(self, inherit):
         self.inherit = inherit
@@ -257,12 +260,13 @@ class SuperModel:
 
     def soft_weight_aggregation(self, results, model_id, similarity):
         # self.curr_loss += results['moving_loss']
-        if model_id > self.rank:
+        if self.converging and model_id != self.rank:
+            return
+
+        if model_id > self.rank or self.task_round == 0:
             return
         
-        logging.info(f"{type(model_id)}")
-
-        logging.info(f"aggregating model {model_id} into {self.rank}")
+        logging.info(f"aggregating model {model_id} into {self.rank} with similarity {similarity}")
 
         client_id = results['clientId']
         cap = results['cap']
@@ -275,6 +279,7 @@ class SuperModel:
             logging.info(f"skip aggregation")
             self.task_round -= 1
             self.weighted_average_weights()
+            return
 
 
         self.client_records[client_id].training_loss.append(results['moving_loss'])
@@ -282,7 +287,9 @@ class SuperModel:
 
         # logging.info(f"(DEBUG) tasks required on model {self.rank}: {self.task_round}")
         for p in results['update_weight']:
-            d_type = self.model_weights[p].data.dtype
+            # not add hard model parameters
+            if self.rank != model_id and ('total_ops' in p or 'total_params' in p):
+                continue
 
             weights = results['update_weight'][p]
 
@@ -297,15 +304,22 @@ class SuperModel:
                         tail = param_name_prefix[:len(p_prefix)]
                         if tail[1] == '0':
                             matched = True
+                            if model_id != self.rank:
+                                logging.info(f"model {self.rank}: {param_name} <-> model {model_id}: {p}")
                             p = param_name
                             break
                     else:
                         matched = True
+                        if model_id != self.rank:
+                            logging.info(f"model {self.rank}: {param_name} <-> model {model_id}: {p}")
                         break
+                
             if not matched:
                 continue
 
             assert p in self.model_weights
+
+            d_type = self.model_weights[p].data.dtype
 
             # init count and model weights
             if self.model_in_update == 1 or p not in self.count:
@@ -358,7 +372,11 @@ class SuperModel:
             # calculate weighted average weights
             for p in self.model_weights:
                 d_type = self.model_weights[p].data.dtype
-                if self.count[p].dim() > 0:
+                if p in self.count and self.count[p].dim() > 0:
+                    # prevent divide by zero
+                    zero_indexes = (self.count[p] == 0)
+                    self.count[p][zero_indexes] = 1.0
+                    logging.info(f"model {self.rank}'s aggregation weights for parameter {p} is\n{self.count[p]}")
                     self.model_weights[p].data = torch.div(
                         self.model_weights[p].data,
                         self.count[p].to(dtype=d_type)).to(dtype=d_type)
@@ -369,15 +387,27 @@ class SuperModel:
                     self.model_grads_buffer[l][-1] = (
                         self.model_grads_buffer[l][-1] / float(self.gradient_in_update)
                     )
-            self.standardize_loss()
-            self.train_loss_buffer.append(self.curr_loss)
-            self.check_convergence()
-            logging.info(f'training loss of model {self.rank}: {self.curr_loss}')
+            # calculate average loss
+            if len(self.curr_loss) > 0:
+                avg_loss = .0
+                for client_id in self.curr_loss:
+                    avg_loss += self.curr_loss[client_id]
+                avg_loss /= len(self.curr_loss)
+                self.train_loss_buffer.append(avg_loss)
+                logging.info(f'training loss of model {self.rank}: {self.curr_loss}')
+                self.check_convergence()
+                self.standardize_loss()
+            else:
+                logging.info(f'training loss of model {self.rank}: no current loss')
 
     def standardize_loss(self):
         curr_loss_list = np.array([self.curr_loss[client_id] for client_id in self.curr_loss])
-        for client_id in self.curr_loss:
-            self.curr_loss[client_id] = (self.curr_loss[client_id] - np.mean(curr_loss_list)) / np.std(curr_loss_list)
+        if len(curr_loss_list) == 1:
+            for client_id in self.curr_loss:
+                self.curr_loss[client_id] = 0
+        else:
+            for client_id in self.curr_loss:
+                self.curr_loss[client_id] = (self.curr_loss[client_id] - np.mean(curr_loss_list)) / np.std(curr_loss_list)
         # DEBUG
         logging.info(f"log standardized loss {self.curr_loss}")
         return np.mean(curr_loss_list)
@@ -390,12 +420,16 @@ class SuperModel:
                 slope += abs(self.train_loss_buffer[i] - self.train_loss_buffer[i+self.args.step_M]) / self.args.step_M
             slope /= self.args.window_N
             logging.info(f'current accumulative training loss slope of model {self.rank}: {slope}')
+                
             if slope < self.args.transform_threshold:
                 self.converging = True
-            if slope < self.args.convergent_threshold:
+            if self.rank > 10 and slope < self.args.convergent_threshold - 0.0007:
+                self.converged = True
+            elif self.rank <= 10 and slope < self.args.convergent_threshold:
                 self.converged = True
 
     def terminate(self):
+        logging.info(f"terminate the training of model {self.rank}")
         self.save_model()
 
     def save_last_param(self):
@@ -647,6 +681,7 @@ class Model_Manager():
         new_inherit = self.generate_inherit(new_super_model, super_model)
 
         new_super_model.load_inherit(new_inherit)
+        new_super_model.load_utilities(super_model.utilities)
 
         self.models.append(new_super_model)
 
@@ -682,6 +717,11 @@ class Model_Manager():
             self.similarities.append([])
             for j in range(len(self.models)):
                 self.similarities[-1].append(self.get_similarity(i, j))
+
+        for i in range(len(self.similarities)):
+            max_similarity = max(self.similarities[i])
+            for j in range(len(self.similarities[i])):
+                self.similarities[i][j] /= max_similarity
 
     def get_similarity(self, i: int, j: int):
         larger = max([i, j])
@@ -776,12 +816,12 @@ class Model_Manager():
         else:
             for idx, model in enumerate(self.models):
                 assert isinstance(model, SuperModel)
-                # model.assign_task()
-                similarity = self.get_similarity(model_id, idx)
-                model.soft_weight_aggregation(results, model_id, similarity)
                 if model.converged:
                     model.terminate()
-                    self.models[idx] = None
+                    continue
+                similarity = self.similarities[model_id][idx]
+                model.soft_weight_aggregation(results, model_id, similarity)
+                    # self.models[idx] = None
 
 
     def save_last_param(self):
@@ -871,39 +911,54 @@ class Model_Manager():
                 model_training.add(0)
                 break
             else:
-                utilities = {}
+                # check if the candidate models are converged:
+                not_converged_candidate_models = []
                 for model_id, super_model in candidate_models:
-                    utilities[model_id] = super_model.utilities[client_id]
-                    if utilities[model_id] == 0:
-                        utilities[model_id] = 0.1
-                # normalize utility
-                base = .0
-                for model_id in utilities:
-                    base += math.exp(utilities[model_id])
-                for model_id in utilities:
-                    utilities[model_id] = math.exp(utilities[model_id]) / base
-                logging.info(f"normalized utility for client {client_id}: {utilities}")
-                # generate probabilities
-                utilities_list = [[model_id, utilities[model_id]] for model_id in utilities]
-                models_id = []
-                probabilities = []
-                for model_id, probability in utilities_list:
-                    models_id.append(model_id)
-                    probabilities.append(probability)
-                logging.info(f"soft clustering probabilities {probabilities}")
-                decision = np.random.multinomial(1, probabilities)
-                assert sum(decision) == 1
-                for model_id, d in zip(models_id, decision):
-                    if d == 1:
-                        assignment[client_id] = model_id
-                        model_training.add(model_id)
-                        break
+                    assert isinstance(super_model, SuperModel)
+                    if not super_model.is_converged():
+                        not_converged_candidate_models.append([model_id, super_model])
+                if len(not_converged_candidate_models) > 0:
+                    # not all candidate models are converged
+                    # select model from those non-converged models
+                    models_ids, probabilities = self.get_probabilities(client_id, not_converged_candidate_models)
+                    decided = False
+                    while not decided:
+                        decision = np.random.multinomial(1, probabilities)
+                        assert sum(decision) == 1
+                        for model_id, d in zip(models_ids, decision):
+                            if d == 1:
+                                super_model = self.models[model_id]
+                                assert isinstance(super_model, SuperModel)
+                                if super_model.converged:
+                                    break
+                                else:
+                                    assignment[client_id] = model_id
+                                    model_training.add(model_id)
+                                    decided = True
+                                    break
+                else:
+                    # all candidate models are converged
+                    # train the selected for other more complex models
+                    models_ids, probabilities = self.get_probabilities(client_id, candidate_models)
+                    decision = np.random.multinomial(1, probabilities)
+                    assert sum(decision) == 1
+                    for model_id, d in zip(models_ids, decision):
+                        if d == 1:
+                            super_model = self.models[model_id]
+                            assert isinstance(super_model, SuperModel)
+                            assignment[client_id] = model_id
+                            break
 
         for client_id in assignment:
             model_id = assignment[client_id]
-            for super_model in self.models[:model_id+1]:
+            for super_model in self.models[model_id:]:
                 assert isinstance(super_model, SuperModel)
-                super_model.assign_one_task()
+                if super_model.rank in model_training:
+                    if super_model.is_converging():
+                        if super_model.rank == model_id:
+                            super_model.assign_one_task()
+                    else:
+                        super_model.assign_one_task()
         
         # DEBUG
         for super_model in self.models:
@@ -911,10 +966,38 @@ class Model_Manager():
             logging.info(f"model {super_model.rank} has {super_model.task_round} tasks")      
         return assignment, model_training
 
+    def get_probabilities(self, client_id, candidate_models):
+        utilities = {}
+        for model_id, super_model in candidate_models:
+            utilities[model_id] = super_model.utilities[client_id]
+            if utilities[model_id] == 0:
+                utilities[model_id] = 0.1
+                # normalize utility
+        base = .0
+        for model_id in utilities:
+            base += math.exp(utilities[model_id])
+        for model_id in utilities:
+            utilities[model_id] = math.exp(utilities[model_id]) / base
+        logging.info(f"normalized utility for client {client_id}: {utilities}")
+                # generate probabilities
+        utilities_list = [[model_id, utilities[model_id]] for model_id in utilities]
+        models_ids = []
+        probabilities = []
+        for model_id, probability in utilities_list:
+            models_ids.append(model_id)
+            probabilities.append(probability)
+        logging.info(f"soft clustering probabilities {probabilities}")
+        return models_ids, probabilities
+
     def update_utility(self, assignment, clients_cap):
         logging.info(f"Updating clients' utilities on each model")
         for client_id in assignment:
             model_id = assignment[client_id]
+            super_model = self.models[model_id]
+            assert isinstance(super_model, SuperModel)
+            if super_model.is_converged():
+                logging.info(f"skip update utility of client {client_id} at model {model_id} as model {model_id} is converged")
+                continue
             loss = self.models[model_id].curr_loss[client_id]
             candidate_models = []
             client_cap = clients_cap[client_id]
@@ -945,7 +1028,8 @@ class Model_Manager():
     def get_active_model_ids(self):
         active_model_ids = []
         for i, super_model in enumerate(self.models):
-            if super_model:
+            assert isinstance(super_model, SuperModel)
+            if not super_model.is_converged():
                 active_model_ids.append(i)
         return active_model_ids
     
@@ -969,15 +1053,15 @@ class Model_Manager():
         # check is_converging:
         is_converging_models = []
         for super_model in self.models:
-            isinstance(super_model, SuperModel)
-            if super_model.is_converging:
+            assert isinstance(super_model, SuperModel)
+            if super_model.is_converging():
                 is_converging_models.append(super_model.rank)
         logging.info(f"(MODEL MANAGER STATUS) #converging models {len(is_converging_models)}: {is_converging_models}")
         # check is_converged:
         is_converged_models = []
         for super_model in self.models:
             assert isinstance(super_model, SuperModel)
-            if super_model.is_converged:
+            if super_model.is_converged():
                 is_converged_models.append(super_model.rank)
         logging.info(f"(MODEL MANAGER STATUS) #converged models {len(is_converged_models)}: {is_converged_models}")
         # check similarities:
