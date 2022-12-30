@@ -32,6 +32,10 @@ class Client(object):
 
     def train(self, client_data, model, conf):
 
+        # from fedscale.core.net2netlib import retain_grad
+        # for layer in self.layer_names:
+        #     retain_grad(model, layer[1])
+
         clientId = conf.clientId
         logging.info(f"Start to train (CLIENT: {clientId}) ...")
         tokenizer, device = conf.tokenizer, conf.device
@@ -60,17 +64,6 @@ class Client(object):
                 error_type = ex
                 break
 
-        state_dicts = model.state_dict()
-        model_param = {p: state_dicts[p].data.cpu().numpy()
-                       for p in state_dicts}
-        results = {'clientId': clientId, 'moving_loss': self.epoch_train_loss,
-                   'trained_size': self.completed_steps*conf.batch_size, 'success': self.completed_steps > 0}
-        results['utility'] = math.sqrt(
-            self.loss_squre)*float(trained_unique_samples)
-        
-        if math.isnan(results['moving_loss']):
-            logging.info(f"training crash at client {clientId}")
-
         # get layer gradient
         grad_dict = dict()
         for layer in self.layer_names:
@@ -82,7 +75,21 @@ class Client(object):
                 logging.info(f"encounter error {e} when calculating gradients.")
                 logging.info(get_model_layer_weight(model, layer[1]))
                 raise Exception
-        results['grad_dict'] = grad_dict
+        # results['grad_dict'] = grad_dict
+
+        state_dicts = model.state_dict()
+        model_param = {p: state_dicts[p].data.cpu().numpy()
+                       for p in state_dicts}
+        results = {'clientId': clientId, 'moving_loss': self.epoch_train_loss,
+                   'trained_size': self.completed_steps*conf.batch_size, 'success': self.completed_steps > 0,
+                   'grad_dict': grad_dict}
+        results['utility'] = math.sqrt(
+            self.loss_squre)*float(trained_unique_samples)
+        
+        if math.isnan(results['moving_loss']):
+            logging.info(f"training crash at client {clientId}")
+
+
         
         if error_type is None:
             logging.info(f"Training of (CLIENT: {clientId}) completes, {results}")
@@ -239,7 +246,7 @@ class Client(object):
             # ========= Define the backward loss ==============
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
             optimizer.step()
 
             # ========= Weight handler ========================

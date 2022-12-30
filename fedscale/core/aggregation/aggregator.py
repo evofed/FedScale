@@ -471,7 +471,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         broadcast new tasks for executors and select clients for next round.
         """
         self.model_manager.check_status()
-        self.model_manager.save_models()
 
         if self.round > 1:
             logging.info(f"{self.round}")
@@ -547,7 +546,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         if self.round >= self.args.rounds: 
             self.broadcast_aggregator_events(commons.SHUT_DOWN)
-        elif self.round % self.args.eval_interval == 0:# or self.round == 1:
+        elif self.round % self.args.eval_interval == 0 or self.round == 1:
             self.test_result_accumulator = [[] for _ in range(len(self.model_manager.models))]
             self.model_manager.save_models()
             self.model_to_test = self.model_manager.get_active_model_ids()

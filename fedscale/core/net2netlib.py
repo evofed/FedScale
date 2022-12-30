@@ -3,8 +3,6 @@ from typing import OrderedDict
 import numpy as np
 import torch
 import collections
-import logging
-
 
 def get_model_layer_weight(torch_model, attri_name: str):
     layer = get_model_layer(torch_model, attri_name)
@@ -13,12 +11,8 @@ def get_model_layer_weight(torch_model, attri_name: str):
 
 def get_model_layer_grad(torch_model, attri_name: str):
     layer = get_model_layer(torch_model, attri_name)
-    # logging.info(layer.is_leaf)
     return layer.weight.grad.data
 
-def retain_grad(torch_model, attri_name: str):
-    layer = get_model_layer(torch_model, attri_name)
-    layer.weight.retain_grad()
 
 def get_model_layer(torch_model, attri_name: str):
     if '.' in attri_name:
