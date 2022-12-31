@@ -91,14 +91,15 @@ class DataPartitioner(object):
         for idx in range(sample_id):
             self.partitions[clientId_maps[idx]].append(idx)
 
-    def cifar_noniid_partition(self, num_clients: int):
+    def cifar_noniid_partition(self, num_clients: int, label_split=None):
+        logging.info(num_clients)
         num_class = 10
         class_per_client = 2
         shard_per_class = num_clients * class_per_client // num_class
         assert shard_per_class % 1 == 0
         label_idx_split = {}
         for i in range(len(self.labels)):
-            label_i = self.labels[i].item()
+            label_i = self.labels[i]
             if label_i not in label_idx_split:
                 label_idx_split[label_i] = []
             label_idx_split[label_i].append(i)
@@ -111,11 +112,14 @@ class DataPartitioner(object):
             for i, leftover_label_idx in enumerate(leftover):
                 new_label_idx[i] = np.concatenate([new_label_idx[i], [leftover_label_idx]])
             label_idx_split[label] = new_label_idx
-        label_split = [list(range(num_class)) for _ in range(num_clients * class_per_client)]
-        for i in range(len(label_split)):
-            random.shuffle(label_split[i])
-        label_split = np.array(label_split)
-        label_split.reshape(-1,2)
+
+        if label_split == None:
+            label_split = [list(range(num_class)) for _ in range(num_clients * class_per_client)]
+            for i in range(len(label_split)):
+                random.shuffle(label_split[i])
+            label_split = np.array(label_split)
+            label_split = label_split.reshape(-1,2)
+        
         self.partitions = []
         for client_idx in range(num_clients):
             label_partition = label_split[client_idx]
@@ -124,13 +128,13 @@ class DataPartitioner(object):
                 resultIdx += label_idx_split[label][0]
                 label_idx_split[label].pop(0)
             self.partitions.append(resultIdx)
+        return label_split
 
 
-    def partition_data_helper(self, num_clients, data_map_file=None, is_hetero_cifar=False):
+    def partition_data_helper(self, num_clients, data_map_file=None, is_hetero_cifar=False, label_split=None):
 
-        if not is_hetero_cifar:
-            self.cifar_noniid_partition(num_clients=num_clients)
-            return
+        if is_hetero_cifar:
+            return self.cifar_noniid_partition(num_clients=num_clients, label_split=label_split)
         # read mapping file to partition trace
         if data_map_file is not None:
             self.trace_partition(data_map_file)

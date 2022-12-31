@@ -117,14 +117,14 @@ class Executor(object):
 
         training_sets = DataPartitioner(
             data=train_dataset, args=self.args, numOfClass=self.args.num_class)
-        training_sets.partition_data_helper(
+        label_split = training_sets.partition_data_helper(
             num_clients=self.args.num_participants, data_map_file=self.args.data_map_file,
             is_hetero_cifar = self.args.data_set == "cifar10")
 
         client_testing_sets = DataPartitioner(
             data=test_dataset, args=self.args, numOfClass=self.args.num_class, isTest=True)
         client_testing_sets.partition_data_helper(
-            num_clients=self.args.num_participants, data_map_file=self.args.test_data_map_file)
+            num_clients=self.args.num_participants, data_map_file=self.args.test_data_map_file, label_split=label_split)
 
         server_testing_sets = DataPartitioner(
             data=test_dataset, args=self.args, numOfClass=self.args.num_class, isTest=True)
@@ -143,7 +143,7 @@ class Executor(object):
         else:
             self.client_partition = list(range(
                 (self.this_rank - 1) * (self.n_clients // self.num_executors) + 1,
-                self.n_clients
+                self.n_clients+1
             ))
 
         logging.info("Data partitioner completes ...")
