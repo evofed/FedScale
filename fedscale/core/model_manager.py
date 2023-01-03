@@ -59,16 +59,19 @@ class ONNX_Edge():
         else:
             self.name = self.operator
         
-def translate_model(model):
+def translate_model(model, task):
     # 1. translate self.base_model to temporary onnx model
     # 2. parse onnx model to directed acyclic diagram
 
     name2id = {}
     layername2id = {}
 
-    
+    if task == "speech":
+        dummy_input = torch.randn(10, 1, 32, 32)
+    else:
+        dummy_input = torch.randn(10, 3, 256, 256)
     torch.onnx.export(model, dummy_input, 'tmp.onnx',
-        export_params=True, verbose=0, training=1, do_constant_folding=False)
+        export_params=True, verbose=0, training=torch.onnx.TrainingMode.TRAINING, do_constant_folding=False)
     onnx_model = onnx.load('tmp.onnx')
     graph = onnx_model.graph
     graph_string = printable_graph(graph)
@@ -134,11 +137,12 @@ def translate_model(model):
     
     return dag, name2id, layername2id
 
-dummy_input = torch.randn(10, 3, 224, 224)
+# dummy_input = torch.randn(10, 3, 224, 224)
 dataset_input = {
     'femnist': torch.randn(1, 3, 28, 28),
     'openImg': torch.randn(1, 3, 256, 256),
-    'speech': torch.randn(32, 32)
+    'google_speech': torch.randn(10, 1, 32, 32),
+    'cifar10': torch.randn(1, 3, 32, 32)
 }
 
 @dataclass
@@ -150,8 +154,8 @@ class SuperModel:
     def __init__(self, torch_model, args, rank, last_scaled_layer: Set=None) -> None:
         self.torch_model = torch_model
         self.dag, self.name2id, self.layername2id = \
-            translate_model(torch_model)
-        
+            translate_model(torch_model, args.task)
+        logging.info(self.layername2id)
         self.macs, self.params = profile(self.torch_model, inputs=(dataset_input[args.data_set],), verbose=False)
         if last_scaled_layer is None:
             self.last_scaled_layer = set()

@@ -91,13 +91,57 @@ class DataPartitioner(object):
         for idx in range(sample_id):
             self.partitions[clientId_maps[idx]].append(idx)
 
-    def partition_data_helper(self, num_clients, data_map_file=None):
+    def cifar_noniid_partition(self, num_clients: int, label_split=None):
+        logging.info(num_clients)
+        num_class = 10
+        class_per_client = 2
+        shard_per_class = num_clients * class_per_client // num_class
+        assert shard_per_class % 1 == 0
+        label_idx_split = {}
+        for i in range(len(self.labels)):
+            label_i = self.labels[i]
+            if label_i not in label_idx_split:
+                label_idx_split[label_i] = []
+            label_idx_split[label_i].append(i)
+        for label in label_idx_split:
+            label_idx = label_idx_split[label]
+            num_leftover = len(label_idx) % shard_per_class
+            leftover = label_idx[-num_leftover:] if num_leftover > 0 else []
+            new_label_idx = np.array(label_idx[:-num_leftover]) if num_leftover > 0 else np.array(label_idx)
+            new_label_idx = new_label_idx.reshape((shard_per_class, -1)).tolist()
+            for i, leftover_label_idx in enumerate(leftover):
+                new_label_idx[i] = np.concatenate([new_label_idx[i], [leftover_label_idx]])
+            label_idx_split[label] = new_label_idx
 
+        if label_split == None:
+            label_split = [list(range(num_class)) for _ in range(num_clients * class_per_client)]
+            for i in range(len(label_split)):
+                random.shuffle(label_split[i])
+            label_split = np.array(label_split)
+            label_split = label_split.reshape(-1,2)
+        
+        self.partitions = []
+        for client_idx in range(num_clients):
+            label_partition = label_split[client_idx]
+            resultIdx = []
+            for label in label_partition:
+                resultIdx += label_idx_split[label][0]
+                label_idx_split[label].pop(0)
+            self.partitions.append(resultIdx)
+        return label_split
+
+
+    def partition_data_helper(self, num_clients, data_map_file=None, is_hetero_cifar=False, label_split=None):
+
+        if is_hetero_cifar:
+            return self.cifar_noniid_partition(num_clients=num_clients, label_split=label_split)
         # read mapping file to partition trace
         if data_map_file is not None:
             self.trace_partition(data_map_file)
         else:
             self.uniform_partition(num_clients=num_clients)
+
+
 
     def uniform_partition(self, num_clients):
         # random partition
@@ -133,7 +177,6 @@ def select_dataset(rank, partition, batch_size, args, isTest=False, collate_fn=N
     """Load data given client Id"""
     partition = partition.use(rank - 1, isTest)
     dropLast = False if isTest else True
-    # num_loaders = min(int(len(partition)/args.batch_size/2), args.num_loaders)
     if isTest:
         num_loaders = 0
     else:
