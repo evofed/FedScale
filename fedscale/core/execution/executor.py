@@ -142,7 +142,7 @@ class Executor(object):
         else:
             self.client_partition = list(range(
                 (self.this_rank - 1) * (self.n_clients // self.num_executors) + 1,
-                self.n_clients
+                self.n_clients + 1
             ))
 
         logging.info("Data partitioner completes ...")

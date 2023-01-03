@@ -237,7 +237,7 @@ class SuperModel:
                         self.model_weights[p] / float(self.task_round)).to(dtype=d_type)
             for l in self.model_grads_buffer:
                 if self.gradient_in_update > 0:
-                    logging.info(f"get {self.gradient_in_update} gradients")
+                    # logging.info(f"get {self.gradient_in_update} gradients")
                     self.model_grads_buffer[l][-1] = (
                             self.model_grads_buffer[l][-1] / float(self.gradient_in_update))
             # self.curr_loss = self.curr_loss / self.task_round
@@ -376,7 +376,7 @@ class SuperModel:
                     # prevent divide by zero
                     zero_indexes = (self.count[p] == 0)
                     self.count[p][zero_indexes] = 1.0
-                    logging.info(f"model {self.rank}'s aggregation weights for parameter {p} is\n{self.count[p]}")
+                    # logging.info(f"model {self.rank}'s aggregation weights for parameter {p} is\n{self.count[p]}")
                     self.model_weights[p].data = torch.div(
                         self.model_weights[p].data,
                         self.count[p].to(dtype=d_type)).to(dtype=d_type)
