@@ -177,6 +177,9 @@ def init_model():
                 resnet152
             model = resnet152(
                 num_classes=outputClass[args.data_set], in_channels=1)
+        elif args.model == "small-resnet-speech":
+            from fedscale.utils.models.evofed.small_resnet18_speech import small_resnet18_speech
+            model = small_resnet18_speech(num_classes=outputClass[args.data_set])
         else:
             # Should not reach here
             logging.info('Model must be resnet or mobilenet')

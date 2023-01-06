@@ -505,7 +505,10 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # dump round completion information to tensorboard
         if len(self.loss_accumulator):
             self.log_train_result(avg_loss)
-        if self.model_manager.is_converging():
+        if self.model_manager.is_converging() and self.args.enforce_transform < 0:
+            logging.info("FL Transforming")
+            self.transform_model()
+        elif self.args.enforce_transform == self.round:
             logging.info("FL Transforming")
             self.transform_model()
         self.model_manager.reset_all_curr_loss()
