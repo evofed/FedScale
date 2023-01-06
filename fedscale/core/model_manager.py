@@ -587,11 +587,13 @@ class SuperModel:
 
     def select_layers_by_gradient(self):
         model_grad_rank = [[l, sum(self.model_grads_buffer[l]) / float(len(self.model_grads_buffer[l]))] for l in self.model_grads_buffer]
+        if self.args.selected_ratio == -1: # enforce transformation all
+            return [l[0] for l in model_grad_rank]
         model_grad_rank.sort(key=lambda l: l[1])
         max_grad = model_grad_rank[-1][1]
         selected_layers = []
         for l in model_grad_rank:
-            if l[1] > 0.9 *  max_grad:
+            if l[1] > self.args.selected_ratio *  max_grad:
                 selected_layers.append(l[0])
         return selected_layers
 

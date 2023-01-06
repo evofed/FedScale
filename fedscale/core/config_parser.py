@@ -232,6 +232,8 @@ parser.add_argument('--device_cap_file', type=str)
 parser.add_argument('--test_data_map_file', type=str, default=None)
 parser.add_argument('--soft_agg', type=str, default='False')
 parser.add_argument('--client_eval_interval', type=int, default=1000)
+parser.add_argument('--enforce_transform', type=int, default=-1)
+parser.add_argument('--selected_ratio', type=float, default=0.9)
 
 args, unknown = parser.parse_known_args()
 args.use_cuda = eval(args.use_cuda)
