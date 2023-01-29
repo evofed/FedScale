@@ -98,7 +98,7 @@ def widen_child_conv_helper(params: OrderedDict, mapping, noise_factor=5e-2):
         new_params['bias'] = deepcopy(params['bias'])
     return new_params
 
-def shrink_conv_helper(params: OrderedDict, new_in_channel, new_out_channel ,noise_Factor=5e-2):
+def scale_conv_helper(params: OrderedDict, new_in_channel, new_out_channel ,noise_Factor=5e-2):
     """
     weights have shape: (out_channels, in_channels, kernel_height, kernel_width)
     bise have shape: (out_channels, )
@@ -107,12 +107,16 @@ def shrink_conv_helper(params: OrderedDict, new_in_channel, new_out_channel ,noi
     weights = params['weight'].numpy()
     out_channel, in_channel, kernel_height, kernel_width = weights.shape
     new_weights = np.zeros((new_out_channel, new_in_channel, kernel_height, kernel_width))
+    if 'bias' in params.keys():
+        new_bias = np.zeros((new_out_channel,))
     for i in range(new_out_channel):
         for j in range(new_in_channel):
-            new_weights[i, j, :, :] = weights[i, j, :, :]
+            new_weights[i, j, :, :] = weights[i%out_channel, j%in_channel, :, :]
+        if 'bias' in params.keys():
+            new_bias[i] = params['bias'][i%out_channel]
     new_params['weight'] = torch.from_numpy(new_weights)
     if 'bias' in params.keys():
-        new_params['bias'] = deepcopy(params['bias'])
+        new_params['bias'] = torch.from_numpy(new_bias)
     return new_params
 
 def widen_batch_helper(batch: OrderedDict, mapping, noise_factor=5e-2):
@@ -129,8 +133,9 @@ def widen_batch_helper(batch: OrderedDict, mapping, noise_factor=5e-2):
             new_batch[param_name] = torch.from_numpy(new_batch[param_name])
     return new_batch
 
-def shrink_batch_helper(batch: OrderedDict, new_num_features, noise_factor=5e-2):
+def scale_batch_helper(batch: OrderedDict, new_num_features, noise_factor=5e-2):
     new_batch = collections.OrderedDict()
+    old_num_features = batch['weight'].shape[0]
     for param_name in batch.keys():
         batch[param_name] = batch[param_name].numpy()
         if param_name in ['num_batches_tracked']:
@@ -138,7 +143,7 @@ def shrink_batch_helper(batch: OrderedDict, new_num_features, noise_factor=5e-2)
         else:
             new_batch[param_name] = np.zeros((new_num_features, ))
             for i in range(new_num_features):
-                new_batch[param_name][i] = batch[param_name][i]
+                new_batch[param_name][i] = batch[param_name][i%old_num_features]
             new_batch[param_name] = torch.from_numpy(new_batch[param_name])
     return new_batch
 
@@ -178,9 +183,10 @@ def widen_parent_linear_helper(linear: OrderedDict, mapping, noise_factor=5e-2):
     new_linear['bias'] = torch.from_numpy(new_linear['bias'])
     return new_linear
 
-def shrink_linear_helper(linear: OrderedDict, new_in_features, new_out_features, noise_factor=5e-2):
+def scale_linear_helper(linear: OrderedDict, new_in_features, new_out_features, noise_factor=5e-2):
     new_linear = collections.OrderedDict()
     linear['weight'] = linear['weight'].numpy()
+    old_out_features, old_in_features = linear['weight'].shape
     if 'bias' in linear.keys():
         linear['bias'] = linear['bias'].numpy()
         new_linear['bias'] = np.zeros((new_out_features, ))
@@ -188,9 +194,9 @@ def shrink_linear_helper(linear: OrderedDict, new_in_features, new_out_features,
 
     for i in range(new_out_features):
         for j in range(new_in_features):
-            new_linear['weight'][i, j] = linear['weight'][i,j]
+            new_linear['weight'][i, j] = linear['weight'][i%old_out_features, j%old_in_features]
         if 'bias' in linear.keys():
-            new_linear['bias'][i] = linear['bias'][i]
+            new_linear['bias'][i] = linear['bias'][i%old_out_features]
     new_linear['weight'] = torch.from_numpy(new_linear['weight'])
     new_linear['bias'] = torch.from_numpy(new_linear['bias'])
     return new_linear
@@ -232,7 +238,7 @@ def widen_child_conv(torch_model, layer_name, ratio: int=2, noise_factor=5e-2):
     set_model_layer(torch_model, new_layer, layer_name)
     return torch_model
 
-def shrink_conv(torch_model, layer_name, ratio: float=0.5, is_first: bool=False, is_last: bool=False, noise_factor=5e-2):
+def scale_conv(torch_model, layer_name, ratio: float=0.5, is_first: bool=False, is_last: bool=False, noise_factor=5e-2):
     old_layer = get_model_layer(torch_model, layer_name)
     groups = old_layer.groups
     new_in_channel = old_layer.in_channels
@@ -242,7 +248,7 @@ def shrink_conv(torch_model, layer_name, ratio: float=0.5, is_first: bool=False,
     if not is_last:
         new_out_channel = max(int(new_out_channel * ratio), 1)
     old_param = old_layer.state_dict()
-    new_param = shrink_conv_helper(old_param, new_in_channel=new_in_channel, new_out_channel=new_out_channel)
+    new_param = scale_conv_helper(old_param, new_in_channel=new_in_channel, new_out_channel=new_out_channel)
     new_layer = torch.nn.Conv2d(
         new_in_channel * old_layer.groups,
         new_out_channel,
@@ -272,11 +278,11 @@ def widen_bn(torch_model, layer_name, ratio: int=2, noise_factor=5e-2):
     set_model_layer(torch_model, new_layer, layer_name)
     return torch_model
 
-def shrink_bn(torch_model, layer_name, ratio: float=0.5, noise_factor=5e-2):
+def scale_bn(torch_model, layer_name, ratio: float=0.5, noise_factor=5e-2):
     old_layer = get_model_layer(torch_model, layer_name)
     old_param = old_layer.state_dict()
     num_features = max(int(old_layer.num_features * ratio), 1)
-    new_param = shrink_batch_helper(old_param, new_num_features=num_features)
+    new_param = scale_batch_helper(old_param, new_num_features=num_features)
     new_layer = torch.nn.BatchNorm2d(
         num_features=num_features,
         eps=old_layer.eps,
@@ -316,14 +322,14 @@ def widen_parent_ln(torch_model, layer_name, ratio: int=2, noise_factor=5e-2):
     set_model_layer(torch_model, new_layer, layer_name)
     return torch_model
 
-def shrink_ln(torch_model, layer_name, ratio: float=0.5, is_last: bool=False, noise_factor=5e-2):
+def scale_ln(torch_model, layer_name, ratio: float=0.5, is_last: bool=False, noise_factor=5e-2):
     old_layer = get_model_layer(torch_model, layer_name)
     old_param = old_layer.state_dict()
     new_in_features = max(int(old_layer.in_features * ratio), 1)
     new_out_features = old_layer.out_features
     if not is_last:
         new_out_features = max(int(old_layer.out_features * ratio), 1)
-    new_param = shrink_linear_helper(old_param, new_in_features, new_out_features)
+    new_param = scale_linear_helper(old_param, new_in_features, new_out_features)
     new_layer = torch.nn.Linear(
         new_in_features,
         new_out_features,

@@ -172,9 +172,12 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         else:
             model = init_model()
 
-        logging.info(f"{model}")
-
         self.model_manager = Model_Manager(model, self.args)
+
+        if self.args.starting_width_scale > 1:
+            self.model_manager.model_width_scale(self.args.starting_width_scale, inplace=True)
+
+        logging.info(f"{self.model_manager.models[0].torch_model}")
 
     def init_task_context(self):
         """Initiate execution context for specific tasks

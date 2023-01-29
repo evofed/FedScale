@@ -632,19 +632,19 @@ class SuperModel:
                 layers.append([node_id, self.dag.nodes()[node_id]['attr'].name])
         return layers
 
-    def model_shrink(self, ratio: float=0.5):
-        # shrink all weighted layers, including conv, bn, and ln
+    def model_width_scale(self, ratio: float=0.5):
+        # modify all weighted layers, including conv, bn, and ln
         layers = self.get_size_sensitive_layers()
         new_model = deepcopy(self.torch_model)
         for idx, layer in enumerate(layers):
             node_id, layer_name = layer
             node = self.dag.nodes()[node_id]['attr']
             if node.operator == 'Gemm':
-                new_model = shrink_ln(new_model, layer_name, ratio, idx==len(layers)-1)
+                new_model = scale_ln(new_model, layer_name, ratio, idx==len(layers)-1)
             elif node.operator == 'Conv':
-                new_model = shrink_conv(new_model, layer_name, ratio, idx==0, idx==len(layers)-1)
+                new_model = scale_conv(new_model, layer_name, ratio, idx==0, idx==len(layers)-1)
             elif node.operator == 'BatchNormalization':
-                new_model = shrink_bn(new_model, layer_name, ratio)
+                new_model = scale_bn(new_model, layer_name, ratio)
         return new_model
 
 
@@ -792,9 +792,12 @@ class Model_Manager():
                 raise Exception
         return new_inherit
 
-    def model_shrink(self, ratio: float=0.5):
-        new_model = self.models[-1].model_shrink()
-        self.models.append(SuperModel(new_model, self.args, len(self.models), set()))
+    def model_width_scale(self, ratio: float=0.5, inplace: bool=False):
+        new_model = self.models[-1].model_width_scale(ratio)
+        if inplace:
+            self.models[-1] = SuperModel(new_model, self.args, 0, set())
+        else:
+            self.models.append(SuperModel(new_model, self.args, len(self.models), set()))
 
     def get_candidate_layers(self, model_id):
         assert self.models[model_id] != None
