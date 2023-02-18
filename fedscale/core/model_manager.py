@@ -58,7 +58,7 @@ class ONNX_Edge():
         else:
             self.name = self.operator
         
-def translate_model(model):
+def translate_model(model, rank):
     # 1. translate self.base_model to temporary onnx model
     # 2. parse onnx model to directed acyclic diagram
 
@@ -66,8 +66,8 @@ def translate_model(model):
     layername2id = {}
 
     
-    torch.onnx.export(model, dummy_input, 'tmp.onnx',
-        export_params=True, verbose=0, training=1, do_constant_folding=False)
+    torch.onnx.export(model, dummy_input, f'tmp_{rank}.onnx',
+        export_params=True, verbose=0, training=torch.onnx.TrainingMode.TRAINING, do_constant_folding=False)
     onnx_model = onnx.load('tmp.onnx')
     graph = onnx_model.graph
     graph_string = printable_graph(graph)
@@ -134,9 +134,10 @@ def translate_model(model):
     return dag, name2id, layername2id
 dummy_input = torch.randn(10, 3, 224, 224)
 dataset_input = {
-    'femnist': torch.randn(1, 3, 28, 28),
-    'openImg': torch.randn(1, 3, 256, 256),
-    'speech': torch.randn(32, 32)
+    'femnist': torch.randn(10, 3, 28, 28),
+    'openImg': torch.randn(10, 3, 256, 256),
+    'google_speech': torch.randn(10, 1, 32, 32),
+    'cifar10': torch.randn(10, 3, 32, 32)
 }
 
 @dataclass
@@ -147,9 +148,10 @@ class SuperModel:
     def __init__(self, torch_model, args, rank, last_scaled_layer: Set=None) -> None:
         self.torch_model = torch_model
         self.dag, self.name2id, self.layername2id = \
-            translate_model(torch_model)
+            translate_model(torch_model, rank)
         
         self.macs, self.params = profile(self.torch_model, inputs=(dataset_input[args.data_set],), verbose=False)
+        logging.info(f"model {rank} has MACs: {self.macs}")
         if last_scaled_layer is None:
             self.last_scaled_layer = set()
         else:
@@ -168,6 +170,7 @@ class SuperModel:
         self.model_update_size = sys.getsizeof(pickle.dumps(torch_model)) // 1024.0 * 8.0
         self.client_records = {}
         self.count = collections.OrderedDict()
+        self.average_loss = .0
 
     def is_converging(self):
         return self.converging
@@ -241,32 +244,54 @@ class SuperModel:
                 # reset model weights and count
                 self.model_weights[p].data = torch.zeros_like(self.model_weights[p].data)
                 self.count[p] = torch.zeros_like(self.model_weights[p].data)
-            if self.model_weights[p].data.dim() == 1:
-                for i in range(weights.shape[0]):
-                    self.count[p][i] += 1
-                    self.model_weights[p].data[i] += weights[i]
+            if self.model_weights[p].data.dim() == 0:
+                self.count[p] = torch.tensor(0)
+                self.model_weights[p].data = weights
+            elif self.model_weights[p].data.dim() == 1:
+                dim1 = min(weights.shape[0], self.model_weights[p].data.shape[0]) 
+                self.count[p][:dim1] += torch.ones(dim1)
+                self.model_weights[p][:dim1] += weights[:dim1]
+                # for i in range(weights.shape[0]):
+                #     self.count[p][i] += 1
+                #     self.model_weights[p].data[i] += weights[i]
             elif self.model_weights[p].data.dim() == 2:
-                for i in range(weights.shape[0]):
-                    for j in range(weights.shape[1]):
-                        self.count[p][i,j] += 1
-                        self.model_weights[p].data[i,j] += weights[i,j]
+                dim1 = min(weights.shape[0], self.model_weights[p].data.shape[0]) 
+                dim2 = min(weights.shape[1], self.model_weights[p].data.shape[1]) 
+                self.count[p][:dim1, :dim2] += torch.ones(dim1, dim2)
+                self.model_weights[p][:dim1, :dim2] += weights[:dim1, :dim2]
+                # for i in range(weights.shape[0]):
+                #     for j in range(weights.shape[1]):
+                #         self.count[p][i,j] += 1
+                #         self.model_weights[p].data[i,j] += weights[i,j]
             elif self.model_weights[p].data.dim() == 4:
-                for i in range(weights.shape[0]):
-                    for j in range(weights.shape[1]):
-                        for k in range(weights.shape[2]):
-                            for r in range(weights.shape[3]):
-                                self.count[p][i,j,k,r] += 1
-                                self.model_weights[p].data[i,j,k,r] += weights[i,j,k,r]
+                dim1 = min(weights.shape[0], self.model_weights[p].data.shape[0]) 
+                dim2 = min(weights.shape[1], self.model_weights[p].data.shape[1]) 
+                dim3 = min(weights.shape[2], self.model_weights[p].data.shape[2]) 
+                dim4 = min(weights.shape[3], self.model_weights[p].data.shape[3]) 
+                self.count[p][:dim1, :dim2, :dim3, :dim4] += torch.ones(dim1, dim2, dim3, dim4)
+                self.model_weights[p][:dim1, :dim2, :dim3, :dim4] += weights[:dim1, :dim2, :dim3, :dim4]
+                # for i in range(weights.shape[0]):
+                #     for j in range(weights.shape[1]):
+                #         for k in range(weights.shape[2]):
+                #             for r in range(weights.shape[3]):
+                #                 self.count[p][i,j,k,r] += 1
+                #                 self.model_weights[p].data[i,j,k,r] += weights[i,j,k,r]
             else:
                 raise Exception(f"does not support dim {self.model_weights[p].data.dim()}")
         if self.model_in_update == self.task_round:
             for p in self.model_weights:
                 d_type = self.model_weights[p].data.dtype
-                self.model_weights[p].data = torch.div(
-                    self.model_weights[p].data,
-                    self.count[p].to(dtype=d_type)).to(dtype=d_type)
-            self.curr_loss /= self.curr_loss
-            logging.info(f'training loss of model {self.rank}: {self.curr_loss}')
+                if p in self.count and self.count[p].dim() > 0:
+                    # prevent divide by zero
+                    zero_indexes = (self.count[p] == 0)
+                    self.count[p][zero_indexes] = 1.0
+
+                    self.model_weights[p].data = torch.div(
+                        self.model_weights[p].data,
+                        self.count[p].to(dtype=d_type)).to(dtype=d_type)
+            self.average_loss = self.curr_loss / self.task_round
+            self.curr_loss = 0
+            logging.info(f'training loss of model {self.rank}: {self.average_loss}')
 
 
     def check_convergence(self):
@@ -557,6 +582,11 @@ class Model_Manager():
     def weight_aggregation_heterofl(self, results):
         self.models[0].heterofl_combine_models(results)
 
+    def init_sub_models_heterofl(self):
+        for i in range(4):
+            sub_model = self.models[i].model_shrink(0.5)
+            self.models.append(SuperModel(sub_model, self.args, i+1, set()))
+
     def reload_sub_models_heterofl(self):
         submodel_1 = self.models[0].model_shrink(0.5)
         submodel_2 = self.models[0].model_shrink(0.25)
@@ -671,6 +701,18 @@ class Model_Manager():
             if super_model:
                 size += super_model.model_update_size
         return size
+
+    def check_status(self):
+        # checking the status of each super models
+        # is_converging, converged, trained rounds, gradient buffer length, utilities, similarity
+        # curr_loss:
+        avg_loss = []
+        for super_model in self.models:
+            assert isinstance(super_model, SuperModel)
+            # logging.info(f"(MODEL MANAGER STATUS) normalized loss of model {super_model.rank}: {super_model.curr_loss}")
+            avg_loss.append(super_model.average_loss)
+
+        return len(self.models), avg_loss
 
     def aggregate_weights(self, weights_param, comming_weights_param, model_id, comming_model_id, device, is_init: bool=False):
         """

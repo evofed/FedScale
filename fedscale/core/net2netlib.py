@@ -4,6 +4,8 @@ import numpy as np
 import torch
 import collections
 
+import logging
+
 def get_model_layer_weight(torch_model, attri_name: str):
     layer = get_model_layer(torch_model, attri_name)
     return layer.weight.data
@@ -107,12 +109,14 @@ def shrink_conv_helper(params: OrderedDict, new_in_channel, new_out_channel ,noi
     weights = params['weight'].numpy()
     out_channel, in_channel, kernel_height, kernel_width = weights.shape
     new_weights = np.zeros((new_out_channel, new_in_channel, kernel_height, kernel_width))
-    for i in range(new_out_channel):
-        for j in range(new_in_channel):
-            new_weights[i, j, :, :] = weights[i, j, :, :]
+    out_bound = min(new_out_channel, weights.shape[0])
+    in_bound = min(new_in_channel, weights.shape[1])
+
+    new_weights[:out_bound, :in_bound, :, :] = deepcopy(weights[:out_bound, :in_bound, :, :])
     new_params['weight'] = torch.from_numpy(new_weights)
     if 'bias' in params.keys():
-        new_params['bias'] = deepcopy(params['bias'])
+        new_params['bias'] = torch.zeros(new_out_channel)
+        new_params['bias'][:out_bound] = deepcopy(params['bias'][:out_bound])
     return new_params
 
 def widen_batch_helper(batch: OrderedDict, mapping, noise_factor=5e-2):
@@ -235,23 +239,34 @@ def widen_child_conv(torch_model, layer_name, ratio: int=2, noise_factor=5e-2):
 def shrink_conv(torch_model, layer_name, ratio: float=0.5, is_first: bool=False, is_last: bool=False, noise_factor=5e-2):
     old_layer = get_model_layer(torch_model, layer_name)
     groups = old_layer.groups
-    new_in_channel = old_layer.in_channels
-    if not is_first:
-        new_in_channel = max(int(new_in_channel * ratio), 1)
-    new_out_channel = old_layer.out_channels
-    if not is_last:
-        new_out_channel = max(int(new_out_channel * ratio), 1)
+    in_channel = old_layer.in_channels
+    out_channel = old_layer.out_channels
+    new_in_channel = max(int(in_channel * ratio), 1) if not is_first else in_channel
+    new_out_channel = max(int(out_channel * ratio), 1) if not is_last else out_channel
+    new_group = 1
+    for i in range(groups, 0, -1):
+        if new_in_channel % i == 0 and new_out_channel % i == 0:
+            new_group = i
+            break
     old_param = old_layer.state_dict()
-    new_param = shrink_conv_helper(old_param, new_in_channel=new_in_channel, new_out_channel=new_out_channel)
+    # logging.info(f"new_in_channel: {new_in_channel}, new_out_channel: {new_out_channel}, new_groups: {new_group}")
+    # logging.info(f"in_channel: {in_channel}, out_channel: {out_channel}, groups: {groups}")
+    in_weights = new_in_channel // new_group
+    out_weights = new_out_channel
+    # logging.info(f"in_weights: {in_weights}, out_weights: {out_weights}")
+    new_param = shrink_conv_helper(old_param, new_in_channel=in_weights, new_out_channel=out_weights)
+    # logging.info(f"new_weights: {new_param['weight'].shape}, weights: {old_param['weight'].shape}")
     new_layer = torch.nn.Conv2d(
-        new_in_channel * old_layer.groups,
+        new_in_channel,
         new_out_channel,
         old_layer.kernel_size,
         stride=old_layer.stride,
         padding=old_layer.padding,
-        groups=old_layer.groups,
+        groups=new_group,
         bias=True if old_layer.bias is not None else False
     )
+    # logging.info(f"new layer weights: {new_layer.state_dict()['weight'].shape}")
+    # logging.info(f"new layer: {new_layer}")
     new_layer.load_state_dict(new_param)
     set_model_layer(torch_model, new_layer, layer_name)
     return torch_model

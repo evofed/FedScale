@@ -1,14 +1,34 @@
 # package for aggregator
 from fedscale.core.fllibs import *
+import csv
 
 logDir = os.path.join(args.log_path, "logs", args.job_name,
                       args.time_stamp, 'aggregator')
 logFile = os.path.join(logDir, 'log')
 
+statsDir = os.path.join(logDir, "stats")
+statsFile = os.path.join(statsDir, "aggregated.csv")
+statsHeader = ["round", "num_model", "num_converging", "num_converged", "average_loss", "average_test_accuracy", "tmstp_on_completion"]
+
+
+def write_aggregated_stats(num_round: int, num_model: int, average_loss: int, 
+                           average_test_accuracy: float, tmstp_on_completion: float):
+    with open(statsFile, "a") as f:
+        writer = csv.writer(f)
+        writer.writerow([num_round, num_model, average_loss, 
+                         average_test_accuracy, tmstp_on_completion])
+
 
 def init_logging():
     if not os.path.isdir(logDir):
         os.makedirs(logDir, exist_ok=True)
+
+    if not os.path.isdir(statsDir):
+        os.makedirs(statsDir, exist_ok=True)
+
+    with open(statsFile, "w") as f:
+        writer = csv.writer(f)
+        writer.writerow(statsHeader)
 
     logging.basicConfig(
         format='%(asctime)s %(levelname)-8s [%(filename)s:%(lineno)d] %(message)s',

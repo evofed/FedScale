@@ -302,11 +302,11 @@ def test_model(rank, model, test_data, device='cpu', criterion=nn.NLLLoss(), tok
         # precision, recall, f1, sup = precision_recall_fscore_support(targets_list, preds, average='samples')
         top_5, correct, test_len = cal_accuracy(targets_list, preds)
 
-    logging.info('Rank {}: Test set: Average loss: {}, Top-1 Accuracy: {}/{} ({}), Top-5 Accuracy: {}'
-                 .format(rank, test_loss, correct, len(test_data.dataset), acc, acc_5))
+    # logging.info('Rank {}: Test set: Average loss: {}, Top-1 Accuracy: {}/{} ({}), Top-5 Accuracy: {}'
+    #              .format(rank, test_loss, correct, len(test_data.dataset), acc, acc_5))
 
     testRes = {'top_1': correct, 'top_5': top_5,
-               'test_loss': sum_loss, 'test_len': test_len}
+               'test_loss': sum_loss, 'test_len': test_len, 'client_id': rank}
 
     return test_loss, acc, acc_5, testRes
 
