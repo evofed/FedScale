@@ -29,6 +29,7 @@ class Client(object):
         self.completed_steps = 0
         self.loss_squre = 0
         self.layer_names = conf.layer_names
+        self.grad = {}
 
     def train(self, client_data, model, conf):
 
@@ -43,39 +44,36 @@ class Client(object):
         model = model.to(device=device)
         model.train()
 
-        trained_unique_samples = min(
-            len(client_data.dataset), conf.local_steps * conf.batch_size)
+        if conf.local_training == "step":
+            trained_samples = conf.local_steps
+        else:
+            trained_samples = len(client_data.dataset) * conf.local_steps 
         self.global_model = None
-
-        if conf.gradient_policy == 'fed-prox':
-            # could be move to optimizer
-            self.global_model = [param.data.clone() for param in model.parameters()]
 
         optimizer = self.get_optimizer(model, conf)
         criterion = self.get_criterion(conf)
         error_type = None
 
-        # TODO: One may hope to run fixed number of epochs, instead of iterations
-        while self.completed_steps < conf.local_steps:
+        total_step = conf.local_steps if conf.local_training == "step" else conf.local_steps * len(client_data.dataset) // conf.batch_size
+
+        while self.completed_steps < total_step:
 
             try:
                 self.train_step(client_data, conf, model, optimizer, criterion)
             except Exception as ex:
                 error_type = ex
                 break
-
-        # get layer gradient
+        
+        # calculate gradient norm
         grad_dict = dict()
-        for layer in self.layer_names:
-            try:
-                grad = get_model_layer_grad(model, layer[1])
+        try:
+            for layer in self.layer_names:
                 weight = get_model_layer_weight(model, layer[1])
-                grad_dict[layer[1]] = torch.norm(grad.data.cpu()) / torch.norm(weight.data.cpu())
-            except Exception as e:
-                logging.info(f"encounter error {e} when calculating gradients.")
-                logging.info(get_model_layer_weight(model, layer[1]))
-                raise Exception
-        # results['grad_dict'] = grad_dict
+                self.grad[layer[1]] /= float(total_step)
+                grad_dict[layer[1]] = torch.norm(self.grad[layer[1]]) / torch.norm(weight)
+        except:
+            logging.info(f"fail to track gradient in client {clientId}")
+
 
         state_dicts = model.state_dict()
         model_param = {p: state_dicts[p].data.cpu().numpy()
@@ -84,13 +82,8 @@ class Client(object):
                    'trained_size': self.completed_steps*conf.batch_size, 'success': self.completed_steps > 0,
                    'grad_dict': grad_dict}
         results['utility'] = math.sqrt(
-            self.loss_squre)*float(trained_unique_samples)
-        
-        if math.isnan(results['moving_loss']):
-            logging.info(f"training crash at client {clientId}")
+            self.loss_squre)*float(trained_samples)
 
-
-        
         if error_type is None:
             logging.info(f"Training of (CLIENT: {clientId}) completes, {results}")
         else:
@@ -248,6 +241,13 @@ class Client(object):
             loss.backward()
             # torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
             optimizer.step()
+
+            # ========= Track gradient ========================
+            for layer in self.layer_names:
+                temp_grad = get_model_layer_grad(model, layer[1])
+                if layer[1] not in self.grad:
+                    self.grad[layer[1]] = torch.zeros_like(temp_grad)
+                self.grad[layer[1]] += temp_grad
 
             # ========= Weight handler ========================
             self.optimizer.update_client_weight(

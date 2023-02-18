@@ -147,7 +147,7 @@ class DataPartitioner(object):
         # random partition
         numOfLabels = self.getNumOfLabels()
         data_len = self.getDataLen()
-        logging.info(f"Randomly partitioning data, {data_len} samples...")
+        logging.info(f"Randomly partitioning data, {data_len} samples... Test is {self.isTest}")
 
         indexes = list(range(data_len))
         self.rng.shuffle(indexes)

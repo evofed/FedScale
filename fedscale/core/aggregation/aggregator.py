@@ -81,6 +81,12 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         self.log_writer = SummaryWriter(log_dir=logDir)
 
+        # logging test result
+        self.model_accuracy = {}
+        self.client_accuracy = {}
+        self.client_best_model = {}
+        self.average_test_accuracy = .0
+
     def __init_evofed(self, args):
         # ======== model and data ========
         self.model_in_training = []
@@ -227,18 +233,22 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         """
         global_client_profile = {}
         cap = {}
-        if os.path.exists(device_info_file_path):
-            with open(device_info_file_path, 'rb') as fin:
-                # {clientId: [computer, bandwidth]}
-                global_client_profile = pickle.load(fin)
         if os.path.exists(device_cap_file_path):
             with open(device_cap_file_path) as fin:
                 reader = csv.reader(fin)
                 _ = next(reader)
                 for row in reader:
                     cap[int(row[0])] = float(row[1])
-        for clientId in global_client_profile:
-            global_client_profile[clientId]['macs'] = cap[int(clientId)-1]
+        if os.path.exists(device_info_file_path):
+            with open(device_info_file_path, 'rb') as fin:
+                # {clientId: [computer, bandwidth]}
+                raw_global_client_profile = pickle.load(fin)
+        global_client_profile = {}
+        for clientId in raw_global_client_profile:
+            if int(clientId) <= len(cap):
+                global_client_profile[clientId] = raw_global_client_profile[clientId]
+                
+                global_client_profile[clientId]['macs'] = cap[int(clientId)-1]
         return global_client_profile
 
     def client_register_handler(self, executorId, info):
@@ -336,7 +346,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 roundDuration = exe_cost['computation'] + \
                     exe_cost['communication']
                 # if the client is not active by the time of collection, we consider it is lost in this round
-                if self.client_manager.isClientActive(client_to_run, roundDuration + self.global_virtual_clock):
+                if self.client_manager.isClientActive(client_to_run, roundDuration + self.global_virtual_clock) or self.args.data_map_file is None:
                     sampledClientsReal.append(client_to_run)
                     completionTimes.append(roundDuration)
                     completed_client_clock[client_to_run] = exe_cost
@@ -468,17 +478,48 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.save_model()
         # self.model_manager.model_scale_single()
         self.model_manager.model_scale()
+        logging.info(f"check macs after transformation {self.model_manager.get_all_macs()}")
+
+    def write_stats(self):
+        # int          int               int       list(int)       list(dict) list(dict)    list(float)
+        num_models, num_converging, num_converged, trained_rounds, utilities, curr_loss, model_average_loss \
+            = self.model_manager.check_status()
+        trained_clients = [client_id for client_id in self.mapped_models]
+        model_loss = [.0 for _ in range(num_models)]
+        model_clients = [.0 for _ in range(num_models)]
+        client_utility = {}
+        for client_id in trained_clients:
+            model_id = self.mapped_models[client_id]
+            model_clients[model_id] += 1
+            model_loss[model_id] += curr_loss[model_id][client_id]
+            client_utility[client_id] = utilities[model_id][client_id]
+        average_loss = sum(model_average_loss) / float(len(model_average_loss))
+        write_aggregated_stats(self.round, num_model=num_models, num_converging=num_converging,
+                               num_converged=num_converged, average_loss=average_loss, 
+                               average_test_accuracy=self.average_test_accuracy, tmstp_on_completion=None)
+
+        for model_id in range(num_models):
+            # average_model_loss = model_loss[model_id] / model_clients[model_id]
+            average_test_accuracy = None if model_id not in self.model_accuracy else self.model_accuracy[model_id]
+            writer_model_stats(model_id=model_id, num_round=self.round, trained_round=trained_rounds[model_id],
+                               loss=model_average_loss[model_id], average_test_accuracy=average_test_accuracy)
+        
+        for client_id in trained_clients:
+            best_model = None if client_id not in self.client_best_model else self.client_best_model[client_id]
+            test_accuracy = None if client_id not in self.client_accuracy else self.client_accuracy[client_id]
+            write_client_stats(client_id=client_id, num_round=self.round, trained_model=self.mapped_models[client_id],
+                               utility=client_utility[client_id], best_model=best_model, 
+                               test_accuracy=test_accuracy)
 
     def round_completion_handler(self):
         """Triggered upon the round completion, it registers the last round execution info,
         broadcast new tasks for executors and select clients for next round.
         """
-        self.model_manager.check_status()
         self.model_manager.save_models()
 
         if self.round > 1:
-            logging.info(f"{self.round}")
             self.model_manager.update_utility(self.mapped_models, self.current_clients_cap)
+            self.write_stats()
 
         self.global_virtual_clock += self.round_duration
         self.round += 1
@@ -486,6 +527,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         if self.round % self.args.decay_round == 0:
             self.args.learning_rate = max(
                 self.args.learning_rate*self.args.decay_factor, self.args.min_learning_rate)
+            logging.info(f"current learning rate: {self.args.learning_rate}")
 
         # handle the global update w/ current and last
         self.round_weight_handler()
@@ -517,8 +559,11 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.model_manager.reset_all_curr_loss()
 
         # update select participants
-        self.sampled_participants = self.select_participants(
-            select_num_participants=self.args.num_participants, overcommitment=self.args.overcommitment)
+        if self.args.data_map_file is None: # iid with out clients' trace
+            self.sampled_participants = [client_id for client_id in range(1, 1+self.args.num_participants)]
+        else:
+            self.sampled_participants = self.select_participants(
+                select_num_participants=self.args.num_participants, overcommitment=self.args.overcommitment)
         (clientsToRun, round_stragglers, virtual_client_clock, round_duration, flatten_client_duration, clients_cap) = self.tictak_client_tasks(
             self.sampled_participants, self.args.num_participants)
         
@@ -527,7 +572,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         logging.info(f"Selected participants to run: {clientsToRun}")
         # Issue requests to the resource manager; Tasks ordered by the completion time
-        self.mapped_models, self.model_in_training = self.model_manager.assign_tasks_hardware(clientsToRun, clients_cap)
+        self.mapped_models, self.model_in_training = self.model_manager.assign_tasks_hybrid(clientsToRun, clients_cap)
         self.resource_manager.register_tasks(clientsToRun)
         logging.info(f"model(s) {self.model_in_training} will be trained in the next round")
         logging.info(f"model assignment: {self.mapped_models}")
@@ -622,6 +667,21 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         model_id = results['model_id']
         results = results['results']
 
+        # track client test results
+        if len(results) > 1:
+            model_macs = self.model_manager.get_all_macs()
+            for result in results:
+                client_id = result['client_id']
+                accuracy = result['top_1']
+                if client_id not in self.client_accuracy:
+                    self.client_accuracy[client_id] = .0
+                # logging.info(self.client_profiles.keys())
+                if model_macs[model_id] <= float(self.client_profiles[client_id]['macs'])\
+                    and accuracy > self.client_accuracy[client_id]:
+                    self.client_accuracy[client_id] = accuracy
+                    self.client_best_model[client_id] = model_id
+                    
+
         # List append is thread-safe
         self.test_result_accumulator[model_id] += results
 
@@ -662,6 +722,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                          .format(self.model_to_test[0], self.round, self.global_virtual_clock, self.testing_history['perf'][self.round]['top_1'],
                                  self.testing_history['perf'][self.round]['top_5'], self.testing_history['perf'][self.round]['loss'],
                                  self.testing_history['perf'][self.round]['test_len']))
+            self.model_accuracy[model_id] = self.testing_history['perf'][self.round]['top_1']
             self.model_to_test.pop(0)
             # Dump the testing result
             with open(os.path.join(logDir, 'testing_perf'), 'wb') as fout:
@@ -669,6 +730,11 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
             if len(self.loss_accumulator):
                 self.log_test_result()
+
+            # calculate average accuracy
+            for client_id in self.client_accuracy:
+                self.average_test_accuracy += self.client_accuracy[client_id]
+            self.average_test_accuracy /= len(self.client_accuracy)
 
             self.broadcast_events_queue.append(commons.START_ROUND if len(self.model_to_test) == 0 else commons.MODEL_TEST)
 

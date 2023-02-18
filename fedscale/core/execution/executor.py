@@ -119,7 +119,8 @@ class Executor(object):
             data=train_dataset, args=self.args, numOfClass=self.args.num_class)
         label_split = training_sets.partition_data_helper(
             num_clients=self.args.num_participants, data_map_file=self.args.data_map_file,
-            is_hetero_cifar = self.args.data_set == "cifar10")
+            # is_hetero_cifar = self.args.data_set == "cifar10")
+            is_hetero_cifar = False)
 
         client_testing_sets = DataPartitioner(
             data=test_dataset, args=self.args, numOfClass=self.args.num_class, isTest=True)
@@ -413,8 +414,8 @@ class Executor(object):
                 raise Exception(f"Need customized implementation for model testing in {self.args.engine} engine")
 
             test_loss, acc, acc_5, testResults = test_res
-            logging.info("Client {} at model {}: After aggregation round {}, CumulTime {}, eval_time {}, test_loss {}, test_accuracy {:.2f}%, test_5_accuracy {:.2f}% \n"
-                             .format(client_id, model_id, self.round, round(time.time() - self.start_run_time, 4), round(time.time() - evalStart, 4), test_loss, acc*100., acc_5*100.))
+            # logging.info("Client {} at model {}: After aggregation round {}, CumulTime {}, eval_time {}, test_loss {}, test_accuracy {:.2f}%, test_5_accuracy {:.2f}% \n"
+            #                  .format(client_id, model_id, self.round, round(time.time() - self.start_run_time, 4), round(time.time() - evalStart, 4), test_loss, acc*100., acc_5*100.))
             all_test_results.append(testResults)
         return all_test_results
 

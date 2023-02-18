@@ -235,6 +235,7 @@ parser.add_argument('--client_eval_interval', type=int, default=1000)
 parser.add_argument('--enforce_transform', type=int, default=-1)
 parser.add_argument('--selected_ratio', type=float, default=0.9)
 parser.add_argument('--starting_width_scale', type=int, default=1)
+parser.add_argument('--local_training', type=str, default="step")
 
 args, unknown = parser.parse_known_args()
 args.use_cuda = eval(args.use_cuda)

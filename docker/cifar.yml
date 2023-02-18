@@ -1,0 +1,71 @@
+# Configuration file of FAR training experiment
+
+# ========== Cluster configuration ========== 
+# ip address of the parameter server (need 1 GPU process)
+ps_ip: 10.0.0.1
+
+# ip address of each worker:# of available gpus process on each gpu in this node
+# Note that if we collocate ps and worker on same GPU, then we need to decrease this number of available processes on that GPU by 1
+# E.g., master node has 4 available processes, then 1 for the ps, and worker should be set to: worker:3
+worker_ips: 
+    - 10.0.0.1:[1,1,1,1]
+
+exp_path: $FEDSCALE_HOME/fedscale/core
+
+# Entry function of executor and aggregator under $exp_path
+executor_entry: execution/executor.py
+
+aggregator_entry: aggregation/aggregator.py
+
+auth:
+    ssh_user: ""
+    ssh_private_key: ~/.ssh/id_rsa
+
+# cmd to run before we can indeed run FAR (in order)
+setup_commands:
+    - source $HOME/anaconda3/bin/activate fedscale
+
+# ========== Additional job configuration ========== 
+# Default parameters are specified in config_parser.py, wherein more description of the parameter can be found
+
+job_conf: 
+    - job_name: cifar                   # Generate logs under this folder: log_path/job_name/time_stamp
+    - log_path: $FEDSCALE_HOME/benchmark # Path of log files
+    - num_participants: 100                      # Number of participants per round, we use K=100 in our paper, large K will be much slower
+    - data_set: cifar10                     # Dataset: openImg, google_speech, stackoverflow
+    - data_dir: $FEDSCALE_HOME/benchmark/dataset/data  # Path of the dataset
+    # - data_map_file: $FEDSCALE_HOME/benchmark/dataset/data/femnist/client_data_mapping/train.csv              # Allocation of data to each client, turn to iid setting if not provided
+    # - test_data_map_file: $FEDSCALE_HOME/benchmark/dataset/data/femnist/client_data_mapping/test.csv
+    - device_conf_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_device_capacity     # Path of the client trace
+    - device_avail_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_behave_trace
+    - device_cap_file: $FEDSCALE_HOME/benchmark/device_cap/cifar10_cap/resnet18-normal.csv
+    - model: mobilenet_v3_small                            # Models: e.g., shufflenet_v2_x2_0, mobilenet_v2, resnet34, albert-base-v2
+    - model_name: None
+    - model_zoo: torchcv
+    - gradient_policy: fed-avg                 # {"fed-yogi", "fed-prox", "fed-avg"}, "fed-avg" by default
+    - eval_interval: 10                     # How many rounds to run a testing on the testing set
+    - client_eval_interval: 10
+    - rounds: 1000                          # Number of rounds to run this training. We use 1000 in our paper, while it may converge w/ ~400 rounds
+    - filter_less: 21                       # Remove clients w/ less than 21 samples
+    - num_loaders: 1
+    - local_training: step
+    - local_steps: 20
+    - learning_rate: 0.05
+    - batch_size: 10
+    - test_bsz: 5
+    - use_cuda: True
+    - candidate_capacity: 1
+    - convergent_threshold: 0.0001
+    - transform_threshold: 0.001
+    - window_N: 10
+    - step_M: 100
+    - gradient_buffer_length: 5
+    - nas: False
+    # - mode: from_scratch # from_one, from_multiple
+    - selected_ratio: 0.9
+    - step_M: 20
+    - window_N: 10
+    - soft_agg: True
+    - starting_width_scale: 1
+    # - decay_factor: 0.99
+    # - selected_layers: cells.1.downsample.1.0.0,cells.1.downsample.1.2.0

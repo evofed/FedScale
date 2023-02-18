@@ -6,12 +6,12 @@ import collections
 
 def get_model_layer_weight(torch_model, attri_name: str):
     layer = get_model_layer(torch_model, attri_name)
-    return layer.weight.data
+    return layer.weight.data.cpu()
 
 
 def get_model_layer_grad(torch_model, attri_name: str):
     layer = get_model_layer(torch_model, attri_name)
-    return layer.weight.grad.data
+    return layer.weight.grad.data.cpu()
 
 
 def get_model_layer(torch_model, attri_name: str):
@@ -45,7 +45,7 @@ def widen_child_fc_helper(params: OrderedDict, mapping, noise_factor=5e-2):
     bias has shape: (out_channels, )
     """
     new_params = collections.OrderedDict()
-    weights = params['weight'].numpy()
+    weights = params['weight'].cpu().numpy()
     out_channel, _ = weights.shape
     new_in_channel = len(mapping)
     new_weights = np.zeros((out_channel, new_in_channel))
@@ -62,7 +62,7 @@ def widen_parnet_conv_helper(params: OrderedDict, mapping, noise_factor=5e-2):
     bias has shape: (out_channels, )
     """
     new_params = collections.OrderedDict()
-    weights = params['weight'].numpy()
+    weights = params['weight'].cpu().numpy()
     _, in_channel, kernel_height, kernel_width = weights.shape
     new_out_channel = len(mapping)
     new_weights = np.zeros((new_out_channel, in_channel, kernel_height, kernel_width))
@@ -72,7 +72,7 @@ def widen_parnet_conv_helper(params: OrderedDict, mapping, noise_factor=5e-2):
             size=list(weights[mapping[i], :, :, :].shape))
     new_params['weight'] = torch.from_numpy(new_weights)
     if 'bias' in params.keys():
-        bias = params['bias'].numpy()
+        bias = params['bias'].cpu().numpy()
         new_bias = np.zeros((new_out_channel))
         for i in range(len(mapping)):
             new_bias[i] = bias[mapping[i]].copy() \
@@ -86,7 +86,7 @@ def widen_child_conv_helper(params: OrderedDict, mapping, noise_factor=5e-2):
     bise have shape: (out_channels, )
     """
     new_params = collections.OrderedDict()
-    weights = params['weight'].numpy()
+    weights = params['weight'].cpu().numpy()
     out_channel, _, kernel_height, kernel_width = weights.shape
     new_in_channel = len(mapping)
     new_weights = np.zeros((out_channel, new_in_channel, kernel_height, kernel_width))
@@ -104,7 +104,7 @@ def scale_conv_helper(params: OrderedDict, new_in_channel, new_out_channel ,nois
     bise have shape: (out_channels, )
     """
     new_params = collections.OrderedDict()
-    weights = params['weight'].numpy()
+    weights = params['weight'].cpu().numpy()
     out_channel, in_channel, kernel_height, kernel_width = weights.shape
     new_weights = np.zeros((new_out_channel, new_in_channel, kernel_height, kernel_width))
     if 'bias' in params.keys():
@@ -122,7 +122,7 @@ def scale_conv_helper(params: OrderedDict, new_in_channel, new_out_channel ,nois
 def widen_batch_helper(batch: OrderedDict, mapping, noise_factor=5e-2):
     new_batch = collections.OrderedDict()
     for param_name in batch.keys():
-        batch[param_name] = batch[param_name].numpy()
+        batch[param_name] = batch[param_name].cpu().numpy()
         if param_name in ['num_batches_tracked']:
             new_batch[param_name] = deepcopy(torch.from_numpy(batch[param_name]))
         else:
@@ -137,7 +137,7 @@ def scale_batch_helper(batch: OrderedDict, new_num_features, noise_factor=5e-2):
     new_batch = collections.OrderedDict()
     old_num_features = batch['weight'].shape[0]
     for param_name in batch.keys():
-        batch[param_name] = batch[param_name].numpy()
+        batch[param_name] = batch[param_name].cpu().numpy()
         if param_name in ['num_batches_tracked']:
             new_batch[param_name] = deepcopy(torch.from_numpy(batch[param_name]))
         else:
@@ -152,7 +152,7 @@ def widen_child_linear_helper(linear: OrderedDict, mapping, noise_factor=5e-2):
     linear layer only have weight and bias two parameters
     """
     new_linear = collections.OrderedDict()
-    linear['weight'] = linear['weight'].numpy()
+    linear['weight'] = linear['weight'].cpu().numpy()
     out_features = linear['weight'].shape[0]
     new_linear['weight'] = np.zeros((out_features, len(mapping)))
     if 'bias' in linear.keys():
@@ -166,9 +166,9 @@ def widen_child_linear_helper(linear: OrderedDict, mapping, noise_factor=5e-2):
 
 def widen_parent_linear_helper(linear: OrderedDict, mapping, noise_factor=5e-2):
     new_linear = collections.OrderedDict()
-    linear['weight'] = linear['weight'].numpy()
+    linear['weight'] = linear['weight'].cpu().numpy()
     if 'bias' in linear.keys():
-        linear['bias'] = linear['bias'].numpy()
+        linear['bias'] = linear['bias'].cpu().numpy()
         new_linear['bias'] = np.zeros((len(mapping),))
     in_features = linear['weight'].shape[1]
     new_linear['weight'] = np.zeros((len(mapping), in_features))
@@ -185,10 +185,10 @@ def widen_parent_linear_helper(linear: OrderedDict, mapping, noise_factor=5e-2):
 
 def scale_linear_helper(linear: OrderedDict, new_in_features, new_out_features, noise_factor=5e-2):
     new_linear = collections.OrderedDict()
-    linear['weight'] = linear['weight'].numpy()
+    linear['weight'] = linear['weight'].cpu().numpy()
     old_out_features, old_in_features = linear['weight'].shape
     if 'bias' in linear.keys():
-        linear['bias'] = linear['bias'].numpy()
+        linear['bias'] = linear['bias'].cpu().numpy()
         new_linear['bias'] = np.zeros((new_out_features, ))
     new_linear['weight'] = np.zeros((new_out_features, new_in_features))
 
@@ -352,7 +352,7 @@ def deepen(torch_model, layer_name):
         padding=padding, bias=False
     )
     new_conv_param = new_conv.state_dict()
-    new_conv_param['weight'] = torch.nn.init.dirac_(new_conv_param['weight'])
+    torch.nn.init.dirac_(new_conv_param['weight'])
     new_conv.load_state_dict(new_conv_param)
     new_bn = torch.nn.BatchNorm2d(in_channels)
     new_layer = torch.nn.Sequential(
@@ -363,3 +363,21 @@ def deepen(torch_model, layer_name):
     set_model_layer(torch_model, new_layer, layer_name)
     return torch_model
 
+def deepen_ln(torch_model, layer_name):
+    old_layer = deepcopy(get_model_layer(torch_model, layer_name))
+    assert isinstance(old_layer, torch.nn.Linear)
+    in_features = old_layer.out_features
+    new_ln = torch.nn.Linear(
+        in_features, in_features, bias=True
+    )
+    new_ln_param = new_ln.state_dict()
+    torch.nn.init.eye_(new_ln_param['weight'])
+    torch.nn.init.zeros_(new_ln_param['bias'])
+    new_ln.load_state_dict(new_ln_param)
+    new_layer = torch.nn.Sequential(
+        old_layer,
+        new_ln
+    )
+    set_model_layer(torch_model, new_layer, layer_name)
+    return torch_model
+    
