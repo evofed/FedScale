@@ -68,7 +68,7 @@ def translate_model(model, rank):
     
     torch.onnx.export(model, dummy_input, f'tmp_{rank}.onnx',
         export_params=True, verbose=0, training=torch.onnx.TrainingMode.TRAINING, do_constant_folding=False)
-    onnx_model = onnx.load('tmp.onnx')
+    onnx_model = onnx.load(f'tmp_{rank}.onnx')
     graph = onnx_model.graph
     graph_string = printable_graph(graph)
     start, end = graph_string.find('{'), graph_string.find('}')
@@ -231,6 +231,7 @@ class SuperModel:
             logging.info(f'training loss of model {self.rank}: {self.curr_loss}')
 
     def heterofl_combine_models(self, results):
+        logging.info(f"model {self.rank} has {self.task_round} tasks")
         self.curr_loss += results['moving_loss']
         client_id = results['clientId']
         if client_id not in self.client_records:
@@ -251,18 +252,11 @@ class SuperModel:
                 dim1 = min(weights.shape[0], self.model_weights[p].data.shape[0]) 
                 self.count[p][:dim1] += torch.ones(dim1)
                 self.model_weights[p][:dim1] += weights[:dim1]
-                # for i in range(weights.shape[0]):
-                #     self.count[p][i] += 1
-                #     self.model_weights[p].data[i] += weights[i]
             elif self.model_weights[p].data.dim() == 2:
                 dim1 = min(weights.shape[0], self.model_weights[p].data.shape[0]) 
                 dim2 = min(weights.shape[1], self.model_weights[p].data.shape[1]) 
                 self.count[p][:dim1, :dim2] += torch.ones(dim1, dim2)
                 self.model_weights[p][:dim1, :dim2] += weights[:dim1, :dim2]
-                # for i in range(weights.shape[0]):
-                #     for j in range(weights.shape[1]):
-                #         self.count[p][i,j] += 1
-                #         self.model_weights[p].data[i,j] += weights[i,j]
             elif self.model_weights[p].data.dim() == 4:
                 dim1 = min(weights.shape[0], self.model_weights[p].data.shape[0]) 
                 dim2 = min(weights.shape[1], self.model_weights[p].data.shape[1]) 
@@ -270,12 +264,6 @@ class SuperModel:
                 dim4 = min(weights.shape[3], self.model_weights[p].data.shape[3]) 
                 self.count[p][:dim1, :dim2, :dim3, :dim4] += torch.ones(dim1, dim2, dim3, dim4)
                 self.model_weights[p][:dim1, :dim2, :dim3, :dim4] += weights[:dim1, :dim2, :dim3, :dim4]
-                # for i in range(weights.shape[0]):
-                #     for j in range(weights.shape[1]):
-                #         for k in range(weights.shape[2]):
-                #             for r in range(weights.shape[3]):
-                #                 self.count[p][i,j,k,r] += 1
-                #                 self.model_weights[p].data[i,j,k,r] += weights[i,j,k,r]
             else:
                 raise Exception(f"does not support dim {self.model_weights[p].data.dim()}")
         if self.model_in_update == self.task_round:
@@ -662,13 +650,23 @@ class Model_Manager():
         assignment = {}
         model_training = set()
         self.reset_tasks()
-        for client in clients_to_run:
-            for Id, super_model in enumerate(self.models):
-                if super_model.macs <= clients_cap[client]:
-                    super_model.assign_one_task()
-                    assignment[client] = len(self.models) - Id - 1
-                    model_training.add(len(self.models) - Id - 1)
-                    break
+        for idx, client in enumerate(clients_to_run):
+            if idx <= len(clients_to_run) // 4:
+                self.models[0].assign_one_task()
+                assignment[client] = 0
+                model_training.add(0)
+            elif idx <= len(clients_to_run) // 2:
+                self.models[0].assign_one_task()
+                assignment[client] = 1
+                model_training.add(1)
+            elif idx <= len(clients_to_run) * 3 // 4:
+                self.models[0].assign_one_task()
+                assignment[client] = 2
+                model_training.add(2)
+            else:
+                self.models[0].assign_one_task()
+                assignment[client] = 3
+                model_training.add(3)
         logging.info(f"MACs of outstanding models {self.get_all_macs()}")
         logging.info(f"MACs of selected clients {clients_cap}")
         return assignment, list(model_training)

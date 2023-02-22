@@ -526,7 +526,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         # update select participants
         if self.args.data_map_file is None: # iid with out clients' trace
-            self.sampled_participants = [client_id for client_id in range(1, 1+self.args.num_participants)]
+            # self.sampled_participants = random.sample(list(range(1,self.args.num_participants*10)), k=self.args.num_participants)
+            self.sampled_participants = random.sample(list(range(1,1+self.args.num_participants)), k=self.args.num_participants)
         else:
             self.sampled_participants = self.select_participants(
                 select_num_participants=self.args.num_participants, overcommitment=self.args.overcommitment)
