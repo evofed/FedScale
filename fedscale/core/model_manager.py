@@ -607,6 +607,13 @@ class SuperModel:
                 selected_layers.append(l[0])
         return selected_layers
 
+    def select_layers_randomly(self):
+        layers = self.get_weighted_layers()
+        layers = [l[1] for l in layers]
+        import random
+        selected_layers = random.choices(layers, k=2)
+        return selected_layers
+
     def model_scale(self, layers: List[str]):
         logging.info(f"selected layers {layers} to scale up at model {self.rank}")
         widen_layers = []
@@ -702,8 +709,12 @@ class Model_Manager():
         super_model = self.models[-1]
 
         assert isinstance(super_model, SuperModel)
-
-        layers = super_model.select_layers_by_gradient()
+        if self.args.policy == "gradient":
+            layers = super_model.select_layers_by_gradient()
+        elif self.args.policy == "random":
+            layers = super_model.select_layers_randomly()
+        else:
+            raise Exception(f"unsupported layer selection policy")
         new_model, last_scaled_layer = super_model.model_scale(layers)
 
         new_super_model = SuperModel(new_model, self.args, len(self.models), last_scaled_layer)

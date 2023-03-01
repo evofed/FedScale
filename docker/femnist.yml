@@ -64,6 +64,7 @@ job_conf:
     - step_M: 100
     - window_N: 10
     - soft_agg: True
+    - policy: random
     # - starting_width_scale: 1
     # - decay_factor: 0.99
     # - selected_layers: cells.1.downsample.1.0.0,cells.1.downsample.1.2.0
