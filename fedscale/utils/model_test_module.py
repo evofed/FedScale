@@ -307,7 +307,7 @@ def test_model(rank, model, test_data, device='cpu', criterion=nn.NLLLoss(), tok
 
     testRes = {'top_1': correct, 'top_5': top_5,
                'test_loss': sum_loss, 'test_len': test_len,
-               'client_id': rank}
+               'client_id': rank, 'acc': acc, 'acc_5': acc_5}
 
     return test_loss, acc, acc_5, testRes
 

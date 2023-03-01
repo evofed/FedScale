@@ -672,7 +672,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             model_macs = self.model_manager.get_all_macs()
             for result in results:
                 client_id = result['client_id']
-                accuracy = result['top_1']
+                accuracy = result['acc']
                 if client_id not in self.client_accuracy:
                     self.client_accuracy[client_id] = .0
                 # logging.info(self.client_profiles.keys())
@@ -732,9 +732,17 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 self.log_test_result()
 
             # calculate average accuracy
+            self.average_test_accuracy = 0.
+            logging.info(f"debug check average test accuracy: {self.average_test_accuracy}")
+            count_a = 0
             for client_id in self.client_accuracy:
                 self.average_test_accuracy += self.client_accuracy[client_id]
+                count_a += 1
+            logging.info(f"debug check number of client: {count_a}")
+            logging.info(f"debug check average test accuracy sum: {self.average_test_accuracy}")
             self.average_test_accuracy /= len(self.client_accuracy)
+            logging.info(f"debug check final average: {self.average_test_accuracy}")
+
 
             self.broadcast_events_queue.append(commons.START_ROUND if len(self.model_to_test) == 0 else commons.MODEL_TEST)
 
