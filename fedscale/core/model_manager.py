@@ -68,7 +68,7 @@ def translate_model(model, rank):
     
     torch.onnx.export(model, dummy_input, f'tmp_{rank}.onnx',
         export_params=True, verbose=0, training=torch.onnx.TrainingMode.TRAINING, do_constant_folding=False)
-    onnx_model = onnx.load('tmp.onnx')
+    onnx_model = onnx.load(f'tmp_{rank}.onnx')
     graph = onnx_model.graph
     graph_string = printable_graph(graph)
     start, end = graph_string.find('{'), graph_string.find('}')
@@ -132,7 +132,7 @@ def translate_model(model, rank):
             layername2id[dag.nodes()[node_id]['attr'].name] = node_id
     
     return dag, name2id, layername2id
-dummy_input = torch.randn(10, 3, 224, 224)
+dummy_input = torch.randn(10, 1, 32, 32)
 dataset_input = {
     'femnist': torch.randn(10, 3, 28, 28),
     'openImg': torch.randn(10, 3, 256, 256),
@@ -665,9 +665,9 @@ class Model_Manager():
         for client in clients_to_run:
             for Id, super_model in enumerate(self.models):
                 if super_model.macs <= clients_cap[client]:
-                    super_model.assign_one_task()
-                    assignment[client] = len(self.models) - Id - 1
-                    model_training.add(len(self.models) - Id - 1)
+                    self.models[0].assign_one_task()
+                    assignment[client] = Id
+                    model_training.add(Id)
                     break
         logging.info(f"MACs of outstanding models {self.get_all_macs()}")
         logging.info(f"MACs of selected clients {clients_cap}")

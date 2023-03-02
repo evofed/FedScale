@@ -175,6 +175,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             with open(f'/users/yuxuanzh/FedScale/docker/models/{self.args.model_name}.pth.tar', 'rb') as f:
                 logging.info(f'loading checkpoint')
                 model = pickle.load(f)
+                logging.info(model)
         else:
             model = init_model()
 
