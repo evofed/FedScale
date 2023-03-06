@@ -171,19 +171,28 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         """
         assert self.args.engine == commons.PYTORCH, "Please define model for non-PyTorch models"
 
-        if self.args.model_name != 'None':
-            with open(f'/users/yuxuanzh/FedScale/docker/models/{self.args.model_name}.pth.tar', 'rb') as f:
-                logging.info(f'loading checkpoint')
-                model = pickle.load(f)
+        # if self.args.model_name != 'None':
+        #     with open(f'/users/yuxuanzh/FedScale/docker/models/{self.args.model_name}.pth.tar', 'rb') as f:
+        #         logging.info(f'loading checkpoint')
+        #         model = pickle.load(f)
+        # else:
+        #     model = init_model()
+        if ',' in self.args.model_name:
+            model_names = self.args.model_name.split(',')
+            for model_name in model_names:
+                with open(f'/users/yuxuanzh/FedScale/docker/models/{model_name}.pth.tar', 'rb') as f:
+                    logging.info(f'loading checkpoint {model_name}')
+                    model = pickle.load(f)
+                if self.model_manager is None:
+                    self.model_manager = Model_Manager(model, self.args)
+                else:
+                    self.model_manager.add_model(model)
         else:
-            model = init_model()
+            with open(f'/users/yuxuanzh/FedScale/docker/models/{self.args.model_name}.pth.tar', 'rb') as f:
+                logging.info(f'loading checkpoint {self.args.model_name}')
+                model = pickle.load(f)
+                self.model_manager = Model_Manager(model, self.args)
 
-        self.model_manager = Model_Manager(model, self.args)
-
-        if self.args.starting_width_scale > 1:
-            self.model_manager.model_width_scale(self.args.starting_width_scale, inplace=True)
-
-        logging.info(f"{self.model_manager.models[0].torch_model}")
 
     def init_task_context(self):
         """Initiate execution context for specific tasks
