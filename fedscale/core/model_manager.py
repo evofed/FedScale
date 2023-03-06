@@ -611,7 +611,7 @@ class SuperModel:
         layers = self.get_weighted_layers()
         layers = [l[1] for l in layers]
         import random
-        selected_layers = random.choices(layers, k=2)
+        selected_layers = random.choices(layers, k=1)
         return selected_layers
 
     def model_scale(self, layers: List[str]):
