@@ -8,7 +8,7 @@ ps_ip: 10.0.0.4
 # Note that if we collocate ps and worker on same GPU, then we need to decrease this number of available processes on that GPU by 1
 # E.g., master node has 4 available processes, then 1 for the ps, and worker should be set to: worker:3
 worker_ips: 
-    - 10.0.0.4:[2]
+    - 10.0.0.4:[1,0,0,0]
 
 exp_path: $FEDSCALE_HOME/fedscale/core
 
@@ -39,7 +39,7 @@ job_conf:
     - device_conf_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_device_capacity     # Path of the client trace
     - device_avail_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_behave_trace
     - device_cap_file: $FEDSCALE_HOME/benchmark/device_cap/femnist_cap/resnet18-normal.csv
-    - model: nasbench201_0_0                            # Models: e.g., shufflenet_v2_x2_0, mobilenet_v2, resnet34, albert-base-v2
+    - model: resnet34                            # Models: e.g., shufflenet_v2_x2_0, mobilenet_v2, resnet34, albert-base-v2
     - model_name: None
     - model_zoo: evofed-zoo
     - gradient_policy: fed-avg                 # {"fed-yogi", "fed-prox", "fed-avg"}, "fed-avg" by default

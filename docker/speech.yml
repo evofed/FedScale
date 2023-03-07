@@ -29,18 +29,19 @@ setup_commands:
 # Default parameters are specified in config_parser.py, wherein more description of the parameter can be found
 
 job_conf: 
-    - job_name: cifar                   # Generate logs under this folder: log_path/job_name/time_stamp
+    - job_name: speech                   # Generate logs under this folder: log_path/job_name/time_stamp
     - log_path: $FEDSCALE_HOME/benchmark # Path of log files
+    - task: speech
     - num_participants: 100                      # Number of participants per round, we use K=100 in our paper, large K will be much slower
-    - data_set: cifar10                     # Dataset: openImg, google_speech, stackoverflow
-    - data_dir: $FEDSCALE_HOME/benchmark/dataset/data  # Path of the dataset
-    # - data_map_file: $FEDSCALE_HOME/benchmark/dataset/data/femnist/client_data_mapping/train.csv              # Allocation of data to each client, turn to iid setting if not provided
-    # - test_data_map_file: $FEDSCALE_HOME/benchmark/dataset/data/femnist/client_data_mapping/test.csv
+    - data_set: google_speech                     # Dataset: openImg, google_speech, stackoverflow
+    - data_dir: $FEDSCALE_HOME/benchmark/dataset/data/google_speech  # Path of the dataset
+    - data_map_file: $FEDSCALE_HOME/benchmark/dataset/data/google_speech/client_data_mapping/train.csv              # Allocation of data to each client, turn to iid setting if not provided
+    - test_data_map_file: $FEDSCALE_HOME/benchmark/dataset/data/google_speech/client_data_mapping/test.csv
     - device_conf_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_device_capacity     # Path of the client trace
     - device_avail_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_behave_trace
-    - device_cap_file: $FEDSCALE_HOME/benchmark/device_cap/cifar10_cap/resnet18-normal.csv
+    - device_cap_file: $FEDSCALE_HOME/benchmark/device_cap/speech_cap/resnet34_speech-normal.csv
     - model: resnet34                            # Models: e.g., shufflenet_v2_x2_0, mobilenet_v2, resnet34, albert-base-v2
-    - model_name: trained_model
+    - model_name: model_0
     - model_zoo: torchcv
     - gradient_policy: fed-avg                 # {"fed-yogi", "fed-prox", "fed-avg"}, "fed-avg" by default
     - eval_interval: 10                     # How many rounds to run a testing on the testing set
@@ -48,9 +49,9 @@ job_conf:
     - rounds: 12                          # Number of rounds to run this training. We use 1000 in our paper, while it may converge w/ ~400 rounds
     - filter_less: 21                       # Remove clients w/ less than 21 samples
     - num_loaders: 1
-    - local_training: epoch
-    - local_steps: 1
-    - learning_rate: 0.002
+    - local_training: step
+    - local_steps: 20
+    - learning_rate: 0.005
     - batch_size: 10
     - test_bsz: 5
     - use_cuda: True
