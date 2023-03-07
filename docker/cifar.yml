@@ -8,7 +8,7 @@ ps_ip: 10.0.0.1
 # Note that if we collocate ps and worker on same GPU, then we need to decrease this number of available processes on that GPU by 1
 # E.g., master node has 4 available processes, then 1 for the ps, and worker should be set to: worker:3
 worker_ips: 
-    - 10.0.0.1:[1,1,1,1]
+    - 10.0.0.1:[1,0,0,0]
 
 exp_path: $FEDSCALE_HOME/fedscale/core
 
@@ -48,8 +48,8 @@ job_conf:
     - rounds: 1000                          # Number of rounds to run this training. We use 1000 in our paper, while it may converge w/ ~400 rounds
     - filter_less: 21                       # Remove clients w/ less than 21 samples
     - num_loaders: 1
-    - local_training: step
-    - local_steps: 20
+    - local_training: epoch
+    - local_steps: 1
     - learning_rate: 0.05
     - batch_size: 10
     - test_bsz: 5
