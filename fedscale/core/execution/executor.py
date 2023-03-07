@@ -161,7 +161,7 @@ class Executor(object):
         """Start running the executor by setting up execution and communication environment, and monitoring the grpc message.
         """
         self.setup_env()
-        self.model = [self.init_model()]
+        self.model = [None]
         self.training_sets, self.client_testing_sets, self.server_testing_sets = self.init_data()
         self.setup_communication()
         self.event_monitor()

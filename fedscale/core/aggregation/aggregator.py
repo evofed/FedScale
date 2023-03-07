@@ -683,7 +683,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 client_id = result['client_id']
                 accuracy = result['acc']
                 if client_id not in self.client_accuracy:
-                    self.client_accuracy[client_id] = .0
+                    self.client_accuracy[client_id] = accuracy
+                    self.client_best_model[client_id] = model_id
                 # logging.info(self.client_profiles.keys())
                 if model_macs[model_id] <= float(self.client_profiles[client_id]['macs'])\
                     and accuracy > self.client_accuracy[client_id]:

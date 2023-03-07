@@ -70,6 +70,7 @@ def translate_model(model, task):
         dummy_input = torch.randn(10, 1, 32, 32)
     else:
         dummy_input = torch.randn(10, 3, 256, 256)
+    model.to(device=torch.device('cpu'))
     torch.onnx.export(model, dummy_input, 'tmp.onnx',
         export_params=True, verbose=0, training=torch.onnx.TrainingMode.TRAINING, do_constant_folding=False)
     onnx_model = onnx.load('tmp.onnx')
