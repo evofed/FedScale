@@ -367,7 +367,7 @@ class Executor(object):
             test_res = client.test(args, self.this_rank, model, device=device)
             _, _, _, testResults = test_res
         else:
-            if self.round % self.args.client_eval_interval == 0:
+            if self.round % self.args.client_eval_interval == 0 or self.round == 1:
                 all_test_results = self.client_testing(args, model_id, evalStart, device, model)
             else:
                 all_test_results = []

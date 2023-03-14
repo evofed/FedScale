@@ -95,6 +95,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # self.test_result_accumulator = [[] for _ in range(0, len(self.model))]
         self.test_result_accumulator = [[]]
         self.tasks_round = 0
+        self.model_manager = None
 
         # ======== Task specific ============
         self.init_task_context()
@@ -477,7 +478,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
     def round_weight_handler(self):
         """Update model when the round completes
         """
-        if self.round > 1:
+        if self.round >= 1:
             self.model_manager.load_model_weight(self.optimizer)
     
     def save_model(self):
@@ -494,30 +495,30 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         num_models, num_converging, num_converged, trained_rounds, utilities, curr_loss, model_average_loss \
             = self.model_manager.check_status()
         trained_clients = [client_id for client_id in self.mapped_models]
-        model_loss = [.0 for _ in range(num_models)]
+        # model_loss = [.0 for _ in range(num_models)]
         model_clients = [.0 for _ in range(num_models)]
         client_utility = {}
-        for client_id in trained_clients:
-            model_id = self.mapped_models[client_id]
-            model_clients[model_id] += 1
-            model_loss[model_id] += curr_loss[model_id][client_id]
-            client_utility[client_id] = utilities[model_id][client_id]
+        # for client_id in trained_clients:
+        #     model_id = self.mapped_models[client_id]
+        #     model_clients[model_id] += 1
+        #     # model_loss[model_id] += curr_loss[model_id][client_id]
+        #     client_utility[client_id] = utilities[model_id][client_id]
         average_loss = sum(model_average_loss) / float(len(model_average_loss))
         write_aggregated_stats(self.round, num_model=num_models, num_converging=num_converging,
                                num_converged=num_converged, average_loss=average_loss, 
                                average_test_accuracy=self.average_test_accuracy, tmstp_on_completion=None)
 
-        for model_id in range(num_models):
-            # average_model_loss = model_loss[model_id] / model_clients[model_id]
-            average_test_accuracy = None if model_id not in self.model_accuracy else self.model_accuracy[model_id]
-            writer_model_stats(model_id=model_id, num_round=self.round, trained_round=trained_rounds[model_id],
-                               loss=model_average_loss[model_id], average_test_accuracy=average_test_accuracy)
+        # for model_id in range(num_models):
+        #     # average_model_loss = model_loss[model_id] / model_clients[model_id]
+        #     average_test_accuracy = None if model_id not in self.model_accuracy else self.model_accuracy[model_id]
+        #     writer_model_stats(model_id=model_id, num_round=self.round, trained_round=trained_rounds[model_id],
+        #                        loss=model_average_loss[model_id], average_test_accuracy=average_test_accuracy)
         
-        for client_id in trained_clients:
+        for client_id in self.client_accuracy:
             best_model = None if client_id not in self.client_best_model else self.client_best_model[client_id]
             test_accuracy = None if client_id not in self.client_accuracy else self.client_accuracy[client_id]
-            write_client_stats(client_id=client_id, num_round=self.round, trained_model=self.mapped_models[client_id],
-                               utility=client_utility[client_id], best_model=best_model, 
+            write_client_stats(client_id=client_id, num_round=self.round, trained_model=self.mapped_models[client_id] if client_id in self.mapped_models else 0,
+                               utility=client_utility[client_id] if client_id in client_utility else 0, best_model=best_model, 
                                test_accuracy=test_accuracy)
 
     def round_completion_handler(self):
@@ -527,7 +528,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.model_manager.save_models()
 
         if self.round > 1:
-            self.model_manager.update_utility(self.mapped_models, self.current_clients_cap)
+            # self.model_manager.update_utility(self.mapped_models, self.current_clients_cap)
             self.write_stats()
 
         self.global_virtual_clock += self.round_duration
@@ -581,7 +582,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         logging.info(f"Selected participants to run: {clientsToRun}")
         # Issue requests to the resource manager; Tasks ordered by the completion time
-        self.mapped_models, self.model_in_training = self.model_manager.assign_tasks_hybrid(clientsToRun, clients_cap)
+        self.mapped_models, self.model_in_training = self.model_manager.assign_tasks_hardware(clientsToRun, clients_cap)
         self.resource_manager.register_tasks(clientsToRun)
         logging.info(f"model(s) {self.model_in_training} will be trained in the next round")
         logging.info(f"model assignment: {self.mapped_models}")
@@ -607,7 +608,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         if self.round >= self.args.rounds: 
             self.broadcast_aggregator_events(commons.SHUT_DOWN)
-        elif self.round % self.args.eval_interval == 0:# or self.round == 1:
+        elif self.round % self.args.eval_interval == 0 or self.round == 1:
             self.test_result_accumulator = [[] for _ in range(len(self.model_manager.models))]
             self.model_manager.save_models()
             self.model_to_test = self.model_manager.get_active_model_ids()
@@ -686,10 +687,12 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                     self.client_accuracy[client_id] = accuracy
                     self.client_best_model[client_id] = model_id
                 # logging.info(self.client_profiles.keys())
-                if model_macs[model_id] <= float(self.client_profiles[client_id]['macs'])\
+                if (model_macs[model_id] <= float(self.client_profiles[client_id]['macs']) \
+                    or model_id == model_macs.index(min(model_macs)))\
                     and accuracy > self.client_accuracy[client_id]:
                     self.client_accuracy[client_id] = accuracy
                     self.client_best_model[client_id] = model_id
+        
                     
 
         # List append is thread-safe
@@ -753,7 +756,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             self.average_test_accuracy /= len(self.client_accuracy)
             logging.info(f"debug check final average: {self.average_test_accuracy}")
 
-
+            self.write_stats()
             self.broadcast_events_queue.append(commons.START_ROUND if len(self.model_to_test) == 0 else commons.MODEL_TEST)
 
     def broadcast_aggregator_events(self, event):

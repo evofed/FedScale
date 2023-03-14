@@ -154,8 +154,9 @@ class ClientRecord:
 class SuperModel:
     def __init__(self, torch_model, args, rank, last_scaled_layer: Set=None) -> None:
         self.torch_model = torch_model
-        self.dag, self.name2id, self.layername2id = \
-            translate_model(torch_model, args.task)
+        # self.dag, self.name2id, self.layername2id = \
+        #     translate_model(torch_model, args.task)
+        self.dag, self.name2id, self.layername2id = None, None, None
         # logging.info(self.layername2id)
         self.macs, self.params = profile(self.torch_model, inputs=(dataset_input[args.data_set],), verbose=False)
         logging.info(f"model {rank} has MACs: {self.macs}")
@@ -461,6 +462,8 @@ class SuperModel:
 
     def get_weighted_layers(self):
         layers = []
+        if self.dag is None:
+            return []
         for node_id in self.dag.nodes():
             if self.dag.nodes()[node_id]['attr'].operator in weight_operator:
                 layers.append([node_id, self.dag.nodes()[node_id]['attr'].name])
@@ -908,11 +911,11 @@ class Model_Manager():
         model_training = set()
         self.reset_tasks()
         for client in clients_to_run:
-            for Id, super_model in enumerate(reversed(self.models)):
+            for Id, super_model in enumerate(self.models):
                 if super_model.macs <= clients_cap[client]:
                     super_model.assign_one_task()
-                    assignment[client] = len(self.models) - Id - 1
-                    model_training.add(len(self.models) - Id - 1)
+                    assignment[client] = Id
+                    model_training.add(Id)
                     break
             if client not in assignment:
                 super_model.assign_one_task()
