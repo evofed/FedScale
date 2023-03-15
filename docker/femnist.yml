@@ -2,13 +2,13 @@
 
 # ========== Cluster configuration ========== 
 # ip address of the parameter server (need 1 GPU process)
-ps_ip: 10.0.0.4
+ps_ip: 10.0.0.1
 
 # ip address of each worker:# of available gpus process on each gpu in this node
 # Note that if we collocate ps and worker on same GPU, then we need to decrease this number of available processes on that GPU by 1
 # E.g., master node has 4 available processes, then 1 for the ps, and worker should be set to: worker:3
 worker_ips: 
-    - 10.0.0.4:[2]
+    - 10.0.0.1:[2,2,2,0]
 
 exp_path: $FEDSCALE_HOME/fedscale/core
 
@@ -39,9 +39,9 @@ job_conf:
     - device_conf_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_device_capacity     # Path of the client trace
     - device_avail_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_behave_trace
     - device_cap_file: $FEDSCALE_HOME/benchmark/device_cap/femnist_cap/resnet18-normal.csv
-    - model: nasbench201_0_0                            # Models: e.g., shufflenet_v2_x2_0, mobilenet_v2, resnet34, albert-base-v2
+    - model: efficientnet_v2_l                            # Models: e.g., shufflenet_v2_x2_0, mobilenet_v2, resnet34, albert-base-v2
     - model_name: None
-    - model_zoo: evofed-zoo
+    - model_zoo: torchcv
     - gradient_policy: fed-avg                 # {"fed-yogi", "fed-prox", "fed-avg"}, "fed-avg" by default
     - eval_interval: 10                     # How many rounds to run a testing on the testing set
     - client_eval_interval: 10
@@ -56,7 +56,7 @@ job_conf:
     - use_cuda: True
     - candidate_capacity: 1
     - convergent_threshold: 0.0001
-    - transform_threshold: 0.001
+    - transform_threshold: 0
     - gradient_buffer_length: 5
     - nas: False
     # - mode: from_scratch # from_one, from_multiple
