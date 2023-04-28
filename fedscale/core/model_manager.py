@@ -343,26 +343,38 @@ class SuperModel:
                     self.count[p][:dim1] += torch.ones(dim1)
                     self.model_weights[p].data[:dim1] += weights
                 else:
-                    self.count[p][:dim1] += torch.ones(dim1) * similarity / float(self.trained_round)
-                    self.model_weights[p].data[:dim1] += (weights * similarity / float(self.trained_round)).to(dtype=d_type)
+                    if self.args.agg_mode == "nodecay":
+                        self.count[p][:dim1] += torch.ones(dim1)
+                        self.model_weights[p].data[:dim1] += (weights).to(dtype=d_type)
+                    else:
+                        self.count[p][:dim1] += torch.ones(dim1) * similarity / float(self.trained_round)
+                        self.model_weights[p].data[:dim1] += (weights * similarity / float(self.trained_round)).to(dtype=d_type)
             elif self.model_weights[p].data.dim() == 2:
                 dim1, dim2 = weights.shape
                 if self.rank == model_id:
                     self.count[p][:dim1, :dim2] += torch.ones((dim1, dim2))
                     self.model_weights[p].data[:dim1, :dim2] += weights
                 else:
-                    self.count[p][:dim1, :dim2] += torch.ones((dim1, dim2)) * similarity / float(self.trained_round)
-                    self.model_weights[p].data[:dim1, :dim2] += (weights * similarity / float(self.trained_round)).to(dtype=d_type)
+                    if self.args.agg_mode == "nodecay":
+                        self.count[p][:dim1, :dim2] += torch.ones((dim1, dim2))
+                        self.model_weights[p].data[:dim1, :dim2] += (weights).to(dtype=d_type)
+                    else:
+                        self.count[p][:dim1, :dim2] += torch.ones((dim1, dim2)) * similarity / float(self.trained_round)
+                        self.model_weights[p].data[:dim1, :dim2] += (weights * similarity / float(self.trained_round)).to(dtype=d_type)
             elif self.model_weights[p].data.dim() == 4:
                 dim1, dim2, dim3, dim4 = weights.shape
                 if self.rank == model_id:
                     self.count[p][:dim1, :dim2, :dim3, :dim4] += torch.ones((dim1, dim2, dim3, dim4))
                     self.model_weights[p].data[:dim1, :dim2, :dim3, :dim4] += weights
                 else:
-                    self.count[p][:dim1, :dim2, :dim3, :dim4] += torch.ones((dim1, dim2, dim3, dim4)) \
-                                                                 * similarity / float(self.trained_round)
-                    self.model_weights[p].data[:dim1, :dim2, :dim3, :dim4] += (weights * similarity / float(
-                        self.trained_round)).to(dtype=d_type)
+                    if self.args.agg_mode == "nodecay":
+                        self.count[p][:dim1, :dim2, :dim3, :dim4] += torch.ones((dim1, dim2, dim3, dim4))
+                        self.model_weights[p].data[:dim1, :dim2, :dim3, :dim4] += (weights).to(dtype=d_type)
+                    else:
+                        self.count[p][:dim1, :dim2, :dim3, :dim4] += torch.ones((dim1, dim2, dim3, dim4)) \
+                                                                    * similarity / float(self.trained_round)
+                        self.model_weights[p].data[:dim1, :dim2, :dim3, :dim4] += (weights * similarity / float(
+                            self.trained_round)).to(dtype=d_type)
             else:
                 raise Exception(f"does not support dim {self.model_weights[p].data.dim()}")
 
