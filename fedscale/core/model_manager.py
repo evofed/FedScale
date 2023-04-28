@@ -607,6 +607,12 @@ class SuperModel:
                 selected_layers.append(l[0])
         return selected_layers
 
+    def select_layers_randomly(self):
+        import random
+        num_layers = int(self.args.layer_policy.split("-")[-1])
+        layers = [l for l in self.model_grads_buffer]
+        return random.sample(layers, k=num_layers)
+
     def model_scale(self, layers: List[str]):
         logging.info(f"selected layers {layers} to scale up at model {self.rank}")
         widen_layers = []
@@ -703,7 +709,11 @@ class Model_Manager():
 
         assert isinstance(super_model, SuperModel)
 
-        layers = super_model.select_layers_by_gradient()
+        if self.args.layer_policy == "gradient":
+            layers = super_model.select_layers_by_gradient()
+        else:
+            # random selection
+            layers = super_model.select_layers_randomly()
         new_model, last_scaled_layer = super_model.model_scale(layers)
 
         new_super_model = SuperModel(new_model, self.args, len(self.models), last_scaled_layer)
