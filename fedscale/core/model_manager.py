@@ -719,6 +719,7 @@ class Model_Manager():
             layers = super_model.select_layers_by_gradient()
         else:
             # random selection
+            logging.info(f"random layer selection in progress...")
             layers = super_model.select_layers_randomly()
         new_model, last_scaled_layer = super_model.model_scale(layers)
 
