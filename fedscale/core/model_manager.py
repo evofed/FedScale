@@ -639,6 +639,12 @@ class SuperModel:
         logging.info(new_model)
         # self.dag, self.name2id, self.layername2id = \
         #     translate_model(self.torch_model)
+        if self.args.weight_mode == "reset":
+            def weights_init(m):
+                import torch.nn as nn
+                if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear) or isinstance(m, nn.BatchNorm2d):
+                    torch.nn.init.xavier_uniform(m.weight.data)
+            new_model.apply(weights_init)
         return new_model, scaled_layer
 
     def model_deepen(self, layers: List[str]):
