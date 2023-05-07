@@ -241,16 +241,25 @@ class SuperModel:
                 d_type = self.model_weights[p].data.dtype
                 self.model_weights[p].data = (
                         self.model_weights[p] / float(self.task_round)).to(dtype=d_type)
+            # calculate average gradient
             for l in self.model_grads_buffer:
                 if self.gradient_in_update > 0:
                     # logging.info(f"get {self.gradient_in_update} gradients")
                     self.model_grads_buffer[l][-1] = (
                             self.model_grads_buffer[l][-1] / float(self.gradient_in_update))
-            # self.curr_loss = self.curr_loss / self.task_round
-            self.train_loss_buffer.append(self.curr_loss)
-            self.check_convergence()
-            logging.info(f'(DEBUG) gradient buffer of model {self.rank}: {self.model_grads_buffer}')
-            logging.info(f'training loss of model {self.rank}: {self.curr_loss}')
+            # calculate average loss
+            if len(self.curr_loss) > 0:
+                avg_loss = .0
+                for client_id in self.curr_loss:
+                    avg_loss += self.curr_loss[client_id]
+                avg_loss /= len(self.curr_loss)
+                self.average_loss = avg_loss
+                self.train_loss_buffer.append(avg_loss)
+                logging.info(f'training loss of model {self.rank}: avg: {avg_loss}: {self.curr_loss}')
+                self.check_convergence()
+                self.standardize_loss()
+            else:
+                logging.info(f'training loss of model {self.rank}: no current loss')
 
     def update_gradient_buffer(self, cap, results):
         if self.gradient_in_update == 0 and cap > self.macs:
