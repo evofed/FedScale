@@ -34,11 +34,9 @@ job_conf:
     - num_participants: 100                      # Number of participants per round, we use K=100 in our paper, large K will be much slower
     - data_set: cifar10                     # Dataset: openImg, google_speech, stackoverflow
     - data_dir: $FEDSCALE_HOME/benchmark/dataset/data  # Path of the dataset
-    # - data_map_file: $FEDSCALE_HOME/benchmark/dataset/data/femnist/client_data_mapping/train.csv              # Allocation of data to each client, turn to iid setting if not provided
-    # - test_data_map_file: $FEDSCALE_HOME/benchmark/dataset/data/femnist/client_data_mapping/test.csv
     - device_conf_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_device_capacity     # Path of the client trace
     - device_avail_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_behave_trace
-    - device_cap_file: $FEDSCALE_HOME/benchmark/device_cap/cifar10_cap/resnet18-normal.csv
+    - device_cap_file: $FEDSCALE_HOME/benchmark/device_cap/cifar10_cap/resnet18-realistic.csv
     - model: mobilenet_v3_small                            # Models: e.g., shufflenet_v2_x2_0, mobilenet_v2, resnet34, albert-base-v2
     - model_name: None
     - model_zoo: torchcv
@@ -61,11 +59,10 @@ job_conf:
     - step_M: 100
     - gradient_buffer_length: 5
     - nas: False
-    # - mode: from_scratch # from_one, from_multiple
     - selected_ratio: 0.9
     - step_M: 20
     - window_N: 10
     - soft_agg: True
-    - starting_width_scale: 1
-    # - decay_factor: 0.99
-    # - selected_layers: cells.1.downsample.1.0.0,cells.1.downsample.1.2.0
+    - layer_policy: gradient
+    - weight_mode: inherit
+    - agg_mode: decay

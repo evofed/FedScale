@@ -38,7 +38,7 @@ job_conf:
     - test_data_map_file: $FEDSCALE_HOME/benchmark/dataset/data/femnist/client_data_mapping/test.csv
     - device_conf_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_device_capacity     # Path of the client trace
     - device_avail_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_behave_trace
-    - device_cap_file: $FEDSCALE_HOME/benchmark/device_cap/femnist_cap/resnet18-normal.csv
+    - device_cap_file: $FEDSCALE_HOME/benchmark/device_cap/femnist_cap/resnet18-realistic.csv
     - model: nasbench201_0_0                            # Models: e.g., shufflenet_v2_x2_0, mobilenet_v2, resnet34, albert-base-v2
     - model_name: None
     - model_zoo: evofed-zoo
@@ -56,14 +56,13 @@ job_conf:
     - use_cuda: True
     - candidate_capacity: 1
     - convergent_threshold: 0.0001
-    - transform_threshold: 0.001
-    - gradient_buffer_length: 5
-    - nas: False
-    # - mode: from_scratch # from_one, from_multiple
-    - selected_ratio: 0.9
-    - step_M: 100
-    - window_N: 10
+    - transform_threshold: 0.001 # beta
+    - gradient_buffer_length: 10 # T 
+    - selected_ratio: 0.9 # alpha
+    - step_M: 100 # delta
+    - window_N: 10 # gamma
     - soft_agg: True
-    # - starting_width_scale: 1
-    # - decay_factor: 0.99
-    # - selected_layers: cells.1.downsample.1.0.0,cells.1.downsample.1.2.0
+    - nas: False
+    - layer_policy: gradient
+    - weight_mode: inherit
+    - agg_mode: decay
