@@ -36,7 +36,7 @@ job_conf:
     - data_dir: $FEDSCALE_HOME/benchmark/dataset/data  # Path of the dataset
     - device_conf_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_device_capacity     # Path of the client trace
     - device_avail_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_behave_trace
-    - device_cap_file: $FEDSCALE_HOME/benchmark/device_cap/cifar10_cap/resnet18-realistic.csv
+    - device_cap_file: $FEDSCALE_HOME/benchmark/device_cap/cifar10_cap/realistic.csv
     - model: mobilenet_v3_small                            # Models: e.g., shufflenet_v2_x2_0, mobilenet_v2, resnet34, albert-base-v2
     - model_name: None
     - model_zoo: torchcv

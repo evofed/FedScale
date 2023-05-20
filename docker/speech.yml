@@ -39,7 +39,7 @@ job_conf:
     - test_data_map_file: $FEDSCALE_HOME/benchmark/dataset/data/google_speech/client_data_mapping/test.csv
     - device_conf_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_device_capacity     # Path of the client trace
     - device_avail_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_behave_trace
-    - device_cap_file: $FEDSCALE_HOME/benchmark/device_cap/speech_cap/resnet34_speech-realistic.csv
+    - device_cap_file: $FEDSCALE_HOME/benchmark/device_cap/speech_cap/realistic.csv
     - model: small-resnet-speech                            # Models: e.g., shufflenet_v2_x2_0, mobilenet_v2, resnet34, albert-base-v2
     - model_name: None
     - model_zoo: evofed-zoo

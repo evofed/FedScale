@@ -137,12 +137,11 @@ def translate_model(model, task):
     
     return dag, name2id, layername2id
 
-# dummy_input = torch.randn(10, 3, 224, 224)
 dataset_input = {
-    'femnist': torch.randn(10, 3, 28, 28),
-    'openImg': torch.randn(10, 3, 256, 256),
-    'google_speech': torch.randn(10, 1, 32, 32),
-    'cifar10': torch.randn(10, 3, 32, 32)
+    'femnist': torch.randn(1, 3, 28, 28),
+    'openImg': torch.randn(1, 3, 256, 256),
+    'google_speech': torch.randn(1, 1, 32, 32),
+    'cifar10': torch.randn(1, 3, 32, 32)
 }
 
 @dataclass

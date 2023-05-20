@@ -38,7 +38,7 @@ job_conf:
     - test_data_map_file: $FEDSCALE_HOME/benchmark/dataset/data/femnist/client_data_mapping/test.csv
     - device_conf_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_device_capacity     # Path of the client trace
     - device_avail_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_behave_trace
-    - device_cap_file: $FEDSCALE_HOME/benchmark/device_cap/femnist_cap/resnet18-realistic.csv
+    - device_cap_file: $FEDSCALE_HOME/benchmark/device_cap/femnist_cap/realistic.csv
     - model: nasbench201_0_0                            # Models: e.g., shufflenet_v2_x2_0, mobilenet_v2, resnet34, albert-base-v2
     - model_name: None
     - model_zoo: evofed-zoo
