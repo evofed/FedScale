@@ -14,6 +14,7 @@ from fedscale.core.logger.aggragation import logDir
 import pickle
 from dataclasses import dataclass
 import numpy as np
+from torchvision.models.vision_transformer import VisionTransformer
 
 omit_operator = ['Identity', 'Constant']
 conflict_operator = ['Add', 'Mul']
@@ -68,10 +69,13 @@ def translate_model(model, task):
 
     if task == "speech":
         dummy_input = torch.randn(10, 1, 32, 32)
+    elif task == "transformer":
+        dummy_input = torch.randn(10, 3, 32, 32)
     else:
         dummy_input = torch.randn(10, 3, 256, 256)
+    model.eval()
     torch.onnx.export(model, dummy_input, 'tmp.onnx',
-        export_params=True, verbose=0, training=torch.onnx.TrainingMode.TRAINING, do_constant_folding=False)
+        export_params=True, verbose=0, training=torch.onnx.TrainingMode.EVAL, keep_initializers_as_inputs=True)
     onnx_model = onnx.load('tmp.onnx')
     graph = onnx_model.graph
     graph_string = printable_graph(graph)
@@ -137,6 +141,15 @@ def translate_model(model, task):
     
     return dag, name2id, layername2id
 
+
+def translate_vit(model: VisionTransformer):
+    layer_names = [f"encoder.layers.encoder_layer_{i}.mlp.0" for i in range(len(model.encoder.layers))]
+    layers = [[i, layer_name] for i, layer_name in enumerate(layer_names)]
+    layername2id = {}
+    for layerid, layername in layers:
+        layername2id[layername] = layerid
+    return layers, layername2id
+
 # dummy_input = torch.randn(10, 3, 224, 224)
 dataset_input = {
     'femnist': torch.randn(10, 3, 28, 28),
@@ -153,7 +166,10 @@ class ClientRecord:
 class SuperModel:
     def __init__(self, torch_model, args, rank, last_scaled_layer: Set=None) -> None:
         self.torch_model = torch_model
-        self.dag, self.name2id, self.layername2id = \
+        if args.task == "transformer":
+            self.vit_layers, self.layername2id = translate_vit(self.torch_model)
+        else:
+            self.dag, self.name2id, self.layername2id = \
             translate_model(torch_model, args.task)
         # logging.info(self.layername2id)
         self.macs, self.params = profile(self.torch_model, inputs=(dataset_input[args.data_set],), verbose=False)
@@ -480,6 +496,8 @@ class SuperModel:
             pickle.dump(self.torch_model, model_out)
 
     def get_weighted_layers(self):
+        if self.args.task == "transformer":
+            return self.vit_layers
         layers = []
         for node_id in self.dag.nodes():
             if self.dag.nodes()[node_id]['attr'].operator in weight_operator:
@@ -633,8 +651,63 @@ class SuperModel:
         num_layers = int(self.args.layer_policy.split("-")[-1])
         layers = [l for l in self.model_grads_buffer]
         return random.sample(layers, k=num_layers)
+    
+    def widen_vit_layer(self, layername: str, new_model: VisionTransformer):
+        parent = layername
+        child = layername[:-1] + "3"
+        new_model = widen_child_ln(
+            new_model, child)
+        new_model = widen_parent_ln(
+            new_model, parent)
+        return new_model
+    
+    def deepen_vit_layer(self, layername: str, new_model: VisionTransformer):
+        layer_id = self.layername2id[layername]
+        encoder_layer_name = f"encoder.layers.encoder_layer_{layer_id}"
+        old_layer = deepcopy(get_model_layer(new_model, encoder_layer_name))
+        new_mha = deepcopy(old_layer)
+        new_layer = torch.nn.Sequential(
+            old_layer,
+            new_mha
+        )
+        set_model_layer(new_model, new_layer, encoder_layer_name)
+        return new_model
+
+    def transformer_scale(self, layers: List[str]):
+        logging.info(f"selected layers {layers} to scale up at model {self.rank}")
+        widen_layers = []
+        deepen_layers = []
+        scaled_layer = self.last_scaled_layer
+        new_model = deepcopy(self.torch_model)
+        for layer in layers:
+            if layer in self.last_scaled_layer:
+                deepen_layers.append(layer)
+                scaled_layer.remove(layer)
+            else:
+                widen_layers.append(layer)
+                scaled_layer.add(layer)
+        for layer in widen_layers:
+            logging.info(f'widenning layer {layer}')
+            # print(f'widenning layer {layer}')
+            new_model = self.widen_vit_layer(layer, new_model)
+        for layer in deepen_layers:
+            logging.info(f"deepening layer {layer}")
+            # print(f'widenning layer {layer}')
+            new_model = self.deepen_vit_layer(layer, new_model)
+        logging.info(new_model)
+        # self.dag, self.name2id, self.layername2id = \
+        #     translate_model(self.torch_model)
+        if self.args.weight_mode == "reset":
+            def weights_init(m):
+                import torch.nn as nn
+                if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear) or isinstance(m, nn.BatchNorm2d):
+                    torch.nn.init.xavier_uniform(m.weight.data)
+            new_model.apply(weights_init)
+        return new_model, scaled_layer 
 
     def model_scale(self, layers: List[str]):
+        if self.args.task == "transformer":
+            return self.transformer_scale(layers)
         logging.info(f"selected layers {layers} to scale up at model {self.rank}")
         widen_layers = []
         deepen_layers = []

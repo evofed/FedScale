@@ -742,7 +742,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             logging.info(f"debug check average test accuracy sum: {self.average_test_accuracy}")
             self.average_test_accuracy /= len(self.client_accuracy)
             logging.info(f"debug check final average: {self.average_test_accuracy}")
-
+            self.client_accuracy = {}
+            
 
             self.broadcast_events_queue.append(commons.START_ROUND if len(self.model_to_test) == 0 else commons.MODEL_TEST)
 
