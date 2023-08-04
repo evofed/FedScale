@@ -32,6 +32,7 @@ job_conf:
     - job_name: femnist                   # Generate logs under this folder: log_path/job_name/time_stamp
     - log_path: $FEDSCALE_HOME/benchmark # Path of log files
     - num_participants: 100                      # Number of participants per round, we use K=100 in our paper, large K will be much slower
+    - task: transformer
     - data_set: femnist                     # Dataset: openImg, google_speech, stackoverflow
     - data_dir: $FEDSCALE_HOME/benchmark/dataset/data/femnist  # Path of the dataset
     - data_map_file: $FEDSCALE_HOME/benchmark/dataset/data/femnist/client_data_mapping/train.csv              # Allocation of data to each client, turn to iid setting if not provided
@@ -39,7 +40,7 @@ job_conf:
     - device_conf_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_device_capacity     # Path of the client trace
     - device_avail_file: $FEDSCALE_HOME/benchmark/dataset/data/device_info/client_behave_trace
     - device_cap_file: $FEDSCALE_HOME/benchmark/device_cap/femnist_cap/resnet18-normal.csv
-    - model: nasbench201_0_0                            # Models: e.g., shufflenet_v2_x2_0, mobilenet_v2, resnet34, albert-base-v2
+    - model: vit                            # Models: e.g., shufflenet_v2_x2_0, mobilenet_v2, resnet34, albert-base-v2
     - model_name: None
     - model_zoo: evofed-zoo
     - gradient_policy: fed-avg                 # {"fed-yogi", "fed-prox", "fed-avg"}, "fed-avg" by default

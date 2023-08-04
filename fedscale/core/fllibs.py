@@ -258,6 +258,9 @@ def init_model():
                 elif args.model == "small-resnet":
                     from fedscale.utils.models.evofed.small_resnet18 import small_resnet18
                     model = small_resnet18(num_classes=outputClass[args.data_set])
+                elif args.model == "vit":
+                    from torchvision.models.vision_transformer import VisionTransformer
+                    model = VisionTransformer(28, 7, 4, 8, 64, 64, num_classes=outputClass[args.data_set])
                 else:
                     raise NameError(f"Model {args.model} does not exist in EvoFed model zoo")
             else:
