@@ -152,10 +152,10 @@ def translate_vit(model: VisionTransformer):
 
 # dummy_input = torch.randn(10, 3, 224, 224)
 dataset_input = {
-    'femnist': torch.randn(10, 3, 28, 28),
-    'openImg': torch.randn(10, 3, 256, 256),
-    'google_speech': torch.randn(10, 1, 32, 32),
-    'cifar10': torch.randn(10, 3, 32, 32)
+    'femnist': torch.randn(1, 3, 28, 28),
+    'openImg': torch.randn(1, 3, 256, 256),
+    'google_speech': torch.randn(1, 1, 32, 32),
+    'cifar10': torch.randn(1, 3, 32, 32)
 }
 
 @dataclass
@@ -386,6 +386,19 @@ class SuperModel:
                     else:
                         self.count[p][:dim1, :dim2] += torch.ones((dim1, dim2)) * similarity / float(self.trained_round)
                         self.model_weights[p].data[:dim1, :dim2] += (weights * similarity / float(self.trained_round)).to(dtype=d_type)
+            elif self.model_weights[p].data.dim() == 3:
+                dim1, dim2, dim3 = weights.shape
+                if self.rank == model_id:
+                    self.count[p][:dim1, :dim2, :dim3] += torch.ones((dim1, dim2, dim3))
+                    self.model_weights[p].data[:dim1, :dim2, :dim3] += weights
+                else:
+                    if self.args.agg_mode == "nodecay":
+                        self.count[p][:dim1, :dim2, :dim3] += torch.ones((dim1, dim2, dim3))
+                        self.model_weights[p].data[:dim1, :dim2, :dim3] += (weights).to(dtype=d_type)
+                    else:
+                        self.count[p][:dim1, :dim2, :dim3] += torch.ones((dim1, dim2, dim3)) * similarity / float(self.trained_round)
+                        self.model_weights[p].data[:dim1, :dim2, :dim3] += (weights * similarity / float(self.trained_round)).to(dtype=d_type)
+            
             elif self.model_weights[p].data.dim() == 4:
                 dim1, dim2, dim3, dim4 = weights.shape
                 if self.rank == model_id:
@@ -691,9 +704,9 @@ class SuperModel:
             # print(f'widenning layer {layer}')
             new_model = self.widen_vit_layer(layer, new_model)
         for layer in deepen_layers:
-            logging.info(f"deepening layer {layer}")
+            logging.info(f"widening layer {layer}")
             # print(f'widenning layer {layer}')
-            new_model = self.deepen_vit_layer(layer, new_model)
+            new_model = self.widen_vit_layer(layer, new_model)
         logging.info(new_model)
         # self.dag, self.name2id, self.layername2id = \
         #     translate_model(self.torch_model)
