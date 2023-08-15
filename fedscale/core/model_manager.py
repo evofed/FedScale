@@ -877,20 +877,16 @@ class Model_Manager():
                 super_model.reset_curr_loss()
 
     def weight_aggregation(self, results, model_id):
-        if not self.args.soft_agg:
-            self.models[model_id].normal_weight_aggregation(results)
-            if self.models[model_id].converged:
-                self.models[model_id].terminate()
-                self.models[model_id] = None
-        else:
-            for idx, model in enumerate(self.models):
-                assert isinstance(model, SuperModel)
-                if model.converged:
-                    model.terminate()
-                    continue
-                similarity = self.similarities[model_id][idx]
-                model.soft_weight_aggregation(results, model_id, similarity)
-                    # self.models[idx] = None
+        for idx, model in enumerate(self.models):
+            assert isinstance(model, SuperModel)
+            if model.converged:
+                model.terminate()
+                continue
+            similarity = self.similarities[model_id][idx]
+            if not self.args.soft_agg:
+                similarity = 1.
+            model.soft_weight_aggregation(results, model_id, similarity)
+                # self.models[idx] = None
 
 
     def save_last_param(self):
@@ -992,8 +988,11 @@ class Model_Manager():
                     models_ids, probabilities = self.get_probabilities(client_id, not_converged_candidate_models)
                     decided = False
                     while not decided:
-                        decision = np.random.multinomial(1, probabilities)
-                        assert sum(decision) == 1
+                        try:
+                            decision = np.random.multinomial(1, probabilities)
+                        except:
+                            decision = [0 for _ in models_ids]
+                            decision[-1] = 1
                         for model_id, d in zip(models_ids, decision):
                             if d == 1:
                                 super_model = self.models[model_id]
