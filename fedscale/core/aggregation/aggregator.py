@@ -95,6 +95,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # self.test_result_accumulator = [[] for _ in range(0, len(self.model))]
         self.test_result_accumulator = [[]]
         self.tasks_round = 0
+        self.running_training_cost = .0
 
         # ======== Task specific ============
         self.init_task_context()
@@ -172,7 +173,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         assert self.args.engine == commons.PYTORCH, "Please define model for non-PyTorch models"
 
         if self.args.model_name != 'None':
-            with open(f'/users/yuxuanzh/FedScale/docker/models/{self.args.model_name}.pth.tar', 'rb') as f:
+            with open(f'{self.args.model_path}', 'rb') as f:
                 logging.info(f'loading checkpoint')
                 model = pickle.load(f)
         else:
@@ -183,7 +184,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         if self.args.starting_width_scale > 1:
             self.model_manager.model_width_scale(self.args.starting_width_scale, inplace=True)
 
-        logging.info(f"{self.model_manager.models[0].torch_model}")
+        logging.info(f"start model architecture:\n{self.model_manager.models[0].torch_model}")
 
     def init_task_context(self):
         """Initiate execution context for specific tasks
@@ -515,6 +516,13 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         """Triggered upon the round completion, it registers the last round execution info,
         broadcast new tasks for executors and select clients for next round.
         """
+        # calculate training cost
+        for client_id in self.mapped_models:
+            model_id = self.mapped_models[client_id]
+            client_training_cost = self.model_manager.get_model_mac(model_id) * 3 * self.args.local_steps * self.args.batch_size
+            self.running_training_cost += client_training_cost
+        
+        logging.info(f"round {self.round}, running trainig cost: {self.running_training_cost}")
         self.model_manager.save_models()
 
         if self.round > 1:

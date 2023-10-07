@@ -225,7 +225,7 @@ parser.add_argument('--transform_threshold', default=0.001, type=float, help='co
 parser.add_argument('--nas', default='False', type=str, help='whether using nas model')
 parser.add_argument('--selected_layers', default="", type=str, help='selected layer name to scale')
 # parser.add_argument('--mode', default='train', type=str, help='train | trans-train')
-parser.add_argument('--model_name', default='None', type=str, help='name of the model checkpoint file')
+parser.add_argument('--model_path', default='None', type=str, help='relative path of the model checkpoint file')
 parser.add_argument('--window_N', default='10', type=int)
 parser.add_argument('--step_M', default='100', type=int)
 parser.add_argument('--device_cap_file', type=str)

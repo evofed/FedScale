@@ -50,7 +50,9 @@ class ServerOptimizer(object):
             learning_rate, qfedq = self.args.learning_rate, self.args.qfed_q
             Deltas, hs = None, 0.
             last_model = [x.to(device=self.device) for x in last_model]
-
+            import torch
+            import numpy as np
+            
             for result in self.client_training_results:
                 # plug in the weight updates into the gradient
                 grads = [(u - torch.from_numpy(v).to(device=self.device)) * 1.0 /
