@@ -1031,8 +1031,8 @@ class Model_Manager():
                 continue
             loss = self.models[model_id].curr_loss[client_id]
             clients_loss[client_id] = loss
-        self.reset_all_curr_loss()
-        client_loss = self.standardize_loss(clients_loss)
+        # self.reset_all_curr_loss()
+        clients_loss = self.standardize_loss(clients_loss)
         
         for client_id in assignment:
             model_id = assignment[client_id]

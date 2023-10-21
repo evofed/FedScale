@@ -172,8 +172,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         """
         assert self.args.engine == commons.PYTORCH, "Please define model for non-PyTorch models"
 
-        if self.args.model_name != 'None':
-            with open(f'{self.args.model_path}', 'rb') as f:
+        if self.args.model_path != 'None':
+            with open(f'/users/yuxuanzh/FedTrans/docker/{self.args.model_path}', 'rb') as f:
                 logging.info(f'loading checkpoint')
                 model = pickle.load(f)
         else:
