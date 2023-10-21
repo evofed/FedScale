@@ -50,6 +50,10 @@ class Client(object):
             trained_samples = len(client_data.dataset) * conf.local_steps 
         self.global_model = None
 
+        if conf.gradient_policy == 'fed-prox':
+            # could be move to optimizer
+            self.global_model = [param.data.clone() for param in model.parameters()]
+
         optimizer = self.get_optimizer(model, conf)
         criterion = self.get_criterion(conf)
         error_type = None
