@@ -100,6 +100,8 @@ def process_cmd(yaml_file, local=False):
         print(f"Starting workers on {worker} ...")
 
         for cuda_id in range(len(gpu)):
+            if gpu[cuda_id] == 0:
+                continue
             for _ in range(gpu[cuda_id]):
                 worker_cmd = f" python {yaml_conf['exp_path']}/{yaml_conf['executor_entry']} {conf_script} --this_rank={rank_id} --num_executors={total_gpu_processes} --cuda_device=cuda:{cuda_id} "
                 rank_id += 1
