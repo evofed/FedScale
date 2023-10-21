@@ -684,10 +684,15 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 if client_id not in self.client_accuracy:
                     self.client_accuracy[client_id] = .0
                 # logging.info(self.client_profiles.keys())
-                if model_macs[model_id] <= float(self.client_profiles[client_id]['macs'])\
-                    and accuracy > self.client_accuracy[client_id]:
-                    self.client_accuracy[client_id] = accuracy
-                    self.client_best_model[client_id] = model_id
+                if self.args.disable_hardware:
+                    if accuracy > self.client_accuracy[client_id]:
+                        self.client_accuracy[client_id] = accuracy
+                        self.client_best_model[client_id] = model_id
+                else:
+                    if model_macs[model_id] <= float(self.client_profiles[client_id]['macs'])\
+                        and accuracy > self.client_accuracy[client_id]:
+                        self.client_accuracy[client_id] = accuracy
+                        self.client_best_model[client_id] = model_id
                     
 
         # List append is thread-safe
