@@ -470,7 +470,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         """Update model when the round completes
         """
         if self.round > 1:
-            self.model_manager.load_model_weight(self.optimizer)
+            self.model_manager.load_model_weight()
     
     def save_model(self):
         self.model_manager.save_models()

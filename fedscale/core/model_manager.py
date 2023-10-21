@@ -11,6 +11,7 @@ from copy import deepcopy
 from thop import profile
 import torch
 from fedscale.core.logger.aggragation import logDir
+from fedscale.core.aggregation.optimizers import ServerOptimizer
 import pickle
 from dataclasses import dataclass
 import numpy as np
@@ -183,6 +184,7 @@ class SuperModel:
         if rank == 0:
             for layer in self.get_weighted_layers():
                 self.inherit[layer[1]] = 0
+        self.optimizer = ServerOptimizer(self.args.gradient_policy, self.args, self.device)
     
     def load_utilities(self, utilities: dict):
         self.utilities = deepcopy(utilities)
@@ -414,11 +416,11 @@ class SuperModel:
             p.data.clone() for p in self.torch_model.parameters()
         ]
 
-    def load_model_weight(self, optimizer):
+    def load_model_weight(self):
         self.torch_model.load_state_dict(self.model_weights)
         current_grad_weights = [param.data.clone()
                                 for param in self.torch_model.parameters()]
-        optimizer.update_round_gradient(
+        self.optimizer.update_round_gradient(
             self.last_gradient_weights, current_grad_weights, self.torch_model)
 
     def save_model(self):
@@ -845,10 +847,10 @@ class Model_Manager():
             if super_model:
                 super_model.save_last_param()
 
-    def load_model_weight(self, optimizer):
+    def load_model_weight(self):
         for super_model in self.models:
             if super_model:
-                super_model.load_model_weight(optimizer)
+                super_model.load_model_weight()
 
     def save_models(self):
         for super_model in self.models:
