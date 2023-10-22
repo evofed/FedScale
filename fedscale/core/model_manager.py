@@ -151,8 +151,9 @@ class ClientRecord:
     utility: float
 
 class SuperModel:
-    def __init__(self, torch_model, args, rank, last_scaled_layer: Set=None) -> None:
+    def __init__(self, torch_model, args, rank, device, last_scaled_layer: Set=None) -> None:
         self.torch_model = torch_model
+        self.device = device
         self.dag, self.name2id, self.layername2id = \
             translate_model(torch_model, args.task)
         # logging.info(self.layername2id)
@@ -654,14 +655,15 @@ class SuperModel:
 
 
 class Model_Manager():
-    def __init__(self, init_model, args) -> None:
+    def __init__(self, init_model, args, device) -> None:
         self.models = []
         self.args = args
+        self.device = device
         self.add_model(init_model)
         self.similarities = [[1]]
 
     def add_model(self, torch_model):
-        self.models.append(SuperModel(torch_model, self.args, len(self.models), set()))
+        self.models.append(SuperModel(torch_model, self.args, len(self.models), self.device, set()))
 
     def get_latest_model(self):
         return self.models[-1].torch_model
@@ -680,7 +682,7 @@ class Model_Manager():
         # drop the last model
         # TODO: do not drop the last model
         self.models[-1] = None
-        self.models.append(SuperModel(new_model, self.args, len(self.models), last_scaled_layer))
+        self.models.append(SuperModel(new_model, self.args, len(self.models), self.device, last_scaled_layer))
         return self.models[-1].torch_model
     
     def model_scale(self):
@@ -696,7 +698,7 @@ class Model_Manager():
             layers = super_model.select_layers_randomly()
         new_model, last_scaled_layer = super_model.model_scale(layers)
 
-        new_super_model = SuperModel(new_model, self.args, len(self.models), last_scaled_layer)
+        new_super_model = SuperModel(new_model, self.args, len(self.models), self.device, last_scaled_layer)
         new_inherit = self.generate_inherit(new_super_model, super_model)
 
         new_super_model.load_inherit(new_inherit)
@@ -719,7 +721,7 @@ class Model_Manager():
         layers = [layer[1] for layer in layers]
         new_model, last_scaled_layer = super_model.model_scale(layers)
 
-        new_super_model = SuperModel(new_model, self.args, len(self.models), last_scaled_layer)
+        new_super_model = SuperModel(new_model, self.args, len(self.models), self.device, last_scaled_layer)
         new_inherit = self.generate_inherit(new_super_model, super_model)
         print(f"model{len(self.models)}: {new_inherit}")
         new_super_model.load_inherit(new_inherit)
@@ -808,9 +810,9 @@ class Model_Manager():
     def model_width_scale(self, ratio: float=0.5, inplace: bool=False):
         new_model = self.models[-1].model_width_scale(ratio)
         if inplace:
-            self.models[-1] = SuperModel(new_model, self.args, 0, set())
+            self.models[-1] = SuperModel(new_model, self.args, 0, self.device, set())
         else:
-            self.models.append(SuperModel(new_model, self.args, len(self.models), set()))
+            self.models.append(SuperModel(new_model, self.args, len(self.models), self.device, set()))
 
     def get_candidate_layers(self, model_id):
         assert self.models[model_id] != None

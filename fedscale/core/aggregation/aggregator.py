@@ -179,7 +179,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         else:
             model = init_model()
 
-        self.model_manager = Model_Manager(model, self.args)
+        self.model_manager = Model_Manager(model, self.args, self.device)
 
         if self.args.starting_width_scale > 1:
             self.model_manager.model_width_scale(self.args.starting_width_scale, inplace=True)
