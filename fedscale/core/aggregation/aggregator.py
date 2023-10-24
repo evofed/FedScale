@@ -753,8 +753,9 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 count_a += 1
             logging.info(f"debug check number of client: {count_a}")
             logging.info(f"debug check average test accuracy sum: {self.average_test_accuracy}")
-            self.average_test_accuracy /= len(self.client_accuracy)
-            logging.info(f"debug check final average: {self.average_test_accuracy}")
+            if len(self.client_accuracy) != 0
+                self.average_test_accuracy /= len(self.client_accuracy)
+                logging.info(f"debug check final average: {self.average_test_accuracy}")
             self.client_accuracy = {}
 
 

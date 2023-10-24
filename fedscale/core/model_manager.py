@@ -531,23 +531,23 @@ class SuperModel:
         for child in children:
             node_name = self.dag.nodes()[child]['attr'].name
             new_model = widen_child_conv(
-                new_model, node_name)
+                new_model, node_name, ratio=self.args.widen_ratio)
         for parent in parents:
             node_name = self.dag.nodes()[parent]['attr'].name
             new_model = widen_parent_conv(
-                new_model, node_name)
+                new_model, node_name, ratio=self.args.widen_ratio)
         for bn in bns:
             node_name = self.dag.nodes()[bn]['attr'].name
             new_model = widen_bn(
-                new_model, node_name)
+                new_model, node_name, ratio=self.args.widen_ratio)
         for ln_child in ln_children:
             node_name = self.dag.nodes()[ln_child]['attr'].name
             new_model = widen_child_ln(
-                new_model, node_name)
+                new_model, node_name, ratio=self.args.widen_ratio)
         for ln_parent in ln_parents:
             node_name = self.dag.nodes()[ln_parent]['attr'].name
             new_model = widen_parent_ln(
-                new_model, node_name)
+                new_model, node_name, ratio=self.args.widen_ratio)
         return new_model
 
     def deepen_layer(self, node_id, new_model):
