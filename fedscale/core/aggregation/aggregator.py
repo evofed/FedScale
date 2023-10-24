@@ -179,7 +179,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         else:
             model = init_model()
 
-        self.model_manager = Model_Manager(model, self.args)
+        self.model_manager = Model_Manager(model, self.args, self.device)
 
         if self.args.starting_width_scale > 1:
             self.model_manager.model_width_scale(self.args.starting_width_scale, inplace=True)
@@ -470,7 +470,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         """Update model when the round completes
         """
         if self.round > 1:
-            self.model_manager.load_model_weight(self.optimizer)
+            self.model_manager.load_model_weight()
     
     def save_model(self):
         self.model_manager.save_models()
@@ -753,9 +753,9 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 count_a += 1
             logging.info(f"debug check number of client: {count_a}")
             logging.info(f"debug check average test accuracy sum: {self.average_test_accuracy}")
-            if len(self.client_accuracy) != 0
+            if len(self.client_accuracy) > 0:
                 self.average_test_accuracy /= len(self.client_accuracy)
-                logging.info(f"debug check final average: {self.average_test_accuracy}")
+            logging.info(f"debug check final average: {self.average_test_accuracy}")
             self.client_accuracy = {}
 
 
