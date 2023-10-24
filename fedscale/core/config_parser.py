@@ -240,6 +240,7 @@ parser.add_argument('--layer_policy', type=str, default="gradient")
 parser.add_argument('--weight_mode', type=str, default="inherit")
 parser.add_argument('--agg_mode', type=str, default="decay")
 parser.add_argument('--disable_hardware', type=str, default="False")
+parser.add_argument('--widen_ratio', type=int, default="False")
 
 args, unknown = parser.parse_known_args()
 args.use_cuda = eval(args.use_cuda)

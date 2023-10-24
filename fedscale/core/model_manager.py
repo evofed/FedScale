@@ -11,6 +11,7 @@ from copy import deepcopy
 from thop import profile
 import torch
 from fedscale.core.logger.aggragation import logDir
+from fedscale.core.aggregation.optimizers import ServerOptimizer
 import pickle
 from dataclasses import dataclass
 import numpy as np
@@ -150,8 +151,9 @@ class ClientRecord:
     utility: float
 
 class SuperModel:
-    def __init__(self, torch_model, args, rank, last_scaled_layer: Set=None) -> None:
+    def __init__(self, torch_model, args, rank, device, last_scaled_layer: Set=None) -> None:
         self.torch_model = torch_model
+        self.device = device
         self.dag, self.name2id, self.layername2id = \
             translate_model(torch_model, args.task)
         # logging.info(self.layername2id)
@@ -183,6 +185,7 @@ class SuperModel:
         if rank == 0:
             for layer in self.get_weighted_layers():
                 self.inherit[layer[1]] = 0
+        self.optimizer = ServerOptimizer(self.args.gradient_policy, self.args, self.device)
     
     def load_utilities(self, utilities: dict):
         self.utilities = deepcopy(utilities)
@@ -414,11 +417,11 @@ class SuperModel:
             p.data.clone() for p in self.torch_model.parameters()
         ]
 
-    def load_model_weight(self, optimizer):
+    def load_model_weight(self):
         self.torch_model.load_state_dict(self.model_weights)
         current_grad_weights = [param.data.clone()
                                 for param in self.torch_model.parameters()]
-        optimizer.update_round_gradient(
+        self.optimizer.update_round_gradient(
             self.last_gradient_weights, current_grad_weights, self.torch_model)
 
     def save_model(self):
@@ -531,23 +534,23 @@ class SuperModel:
         for child in children:
             node_name = self.dag.nodes()[child]['attr'].name
             new_model = widen_child_conv(
-                new_model, node_name)
+                new_model, node_name, ratio=self.args.widen_ratio)
         for parent in parents:
             node_name = self.dag.nodes()[parent]['attr'].name
             new_model = widen_parent_conv(
-                new_model, node_name)
+                new_model, node_name, ratio=self.args.widen_ratio)
         for bn in bns:
             node_name = self.dag.nodes()[bn]['attr'].name
             new_model = widen_bn(
-                new_model, node_name)
+                new_model, node_name, ratio=self.args.widen_ratio)
         for ln_child in ln_children:
             node_name = self.dag.nodes()[ln_child]['attr'].name
             new_model = widen_child_ln(
-                new_model, node_name)
+                new_model, node_name, ratio=self.args.widen_ratio)
         for ln_parent in ln_parents:
             node_name = self.dag.nodes()[ln_parent]['attr'].name
             new_model = widen_parent_ln(
-                new_model, node_name)
+                new_model, node_name, ratio=self.args.widen_ratio)
         return new_model
 
     def deepen_layer(self, node_id, new_model):
@@ -652,14 +655,15 @@ class SuperModel:
 
 
 class Model_Manager():
-    def __init__(self, init_model, args) -> None:
+    def __init__(self, init_model, args, device) -> None:
         self.models = []
         self.args = args
+        self.device = device
         self.add_model(init_model)
         self.similarities = [[1]]
 
     def add_model(self, torch_model):
-        self.models.append(SuperModel(torch_model, self.args, len(self.models), set()))
+        self.models.append(SuperModel(torch_model, self.args, len(self.models), self.device, set()))
 
     def get_latest_model(self):
         return self.models[-1].torch_model
@@ -678,7 +682,7 @@ class Model_Manager():
         # drop the last model
         # TODO: do not drop the last model
         self.models[-1] = None
-        self.models.append(SuperModel(new_model, self.args, len(self.models), last_scaled_layer))
+        self.models.append(SuperModel(new_model, self.args, len(self.models), self.device, last_scaled_layer))
         return self.models[-1].torch_model
     
     def model_scale(self):
@@ -694,7 +698,7 @@ class Model_Manager():
             layers = super_model.select_layers_randomly()
         new_model, last_scaled_layer = super_model.model_scale(layers)
 
-        new_super_model = SuperModel(new_model, self.args, len(self.models), last_scaled_layer)
+        new_super_model = SuperModel(new_model, self.args, len(self.models), self.device, last_scaled_layer)
         new_inherit = self.generate_inherit(new_super_model, super_model)
 
         new_super_model.load_inherit(new_inherit)
@@ -717,7 +721,7 @@ class Model_Manager():
         layers = [layer[1] for layer in layers]
         new_model, last_scaled_layer = super_model.model_scale(layers)
 
-        new_super_model = SuperModel(new_model, self.args, len(self.models), last_scaled_layer)
+        new_super_model = SuperModel(new_model, self.args, len(self.models), self.device, last_scaled_layer)
         new_inherit = self.generate_inherit(new_super_model, super_model)
         print(f"model{len(self.models)}: {new_inherit}")
         new_super_model.load_inherit(new_inherit)
@@ -806,9 +810,9 @@ class Model_Manager():
     def model_width_scale(self, ratio: float=0.5, inplace: bool=False):
         new_model = self.models[-1].model_width_scale(ratio)
         if inplace:
-            self.models[-1] = SuperModel(new_model, self.args, 0, set())
+            self.models[-1] = SuperModel(new_model, self.args, 0, self.device, set())
         else:
-            self.models.append(SuperModel(new_model, self.args, len(self.models), set()))
+            self.models.append(SuperModel(new_model, self.args, len(self.models), self.device, set()))
 
     def get_candidate_layers(self, model_id):
         assert self.models[model_id] != None
@@ -845,10 +849,10 @@ class Model_Manager():
             if super_model:
                 super_model.save_last_param()
 
-    def load_model_weight(self, optimizer):
+    def load_model_weight(self):
         for super_model in self.models:
             if super_model:
-                super_model.load_model_weight(optimizer)
+                super_model.load_model_weight()
 
     def save_models(self):
         for super_model in self.models:
