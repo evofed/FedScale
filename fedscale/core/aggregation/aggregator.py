@@ -519,7 +519,10 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # calculate training cost
         for client_id in self.mapped_models:
             model_id = self.mapped_models[client_id]
-            client_training_cost = self.model_manager.get_model_mac(model_id) * 3 * self.args.local_steps * self.args.batch_size
+            if self.args.local_training == 'step':
+                client_training_cost = self.model_manager.get_model_mac(model_id) * 3 * self.args.local_steps * self.args.batch_size
+            else:
+                client_training_cost = self.model_manager.get_model_mac(model_id) * 3 * self.args.local_steps * 655493 / 100
             self.running_training_cost += client_training_cost
         
         logging.info(f"round {self.round}, running trainig cost: {self.running_training_cost}")
