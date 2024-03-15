@@ -67,24 +67,12 @@ class Client(object):
             except Exception as ex:
                 error_type = ex
                 break
-        
-        # calculate gradient norm
-        grad_dict = dict()
-        try:
-            for layer in self.layer_names:
-                weight = get_model_layer_weight(model, layer[1])
-                self.grad[layer[1]] /= float(total_step)
-                grad_dict[layer[1]] = torch.norm(self.grad[layer[1]]) / torch.norm(weight)
-        except:
-            logging.info(f"fail to track gradient in client {clientId}")
-
 
         state_dicts = model.state_dict()
         model_param = {p: state_dicts[p].data.cpu().numpy()
                        for p in state_dicts}
         results = {'clientId': clientId, 'moving_loss': self.epoch_train_loss,
-                   'trained_size': self.completed_steps*conf.batch_size, 'success': self.completed_steps > 0,
-                   'grad_dict': grad_dict}
+                   'trained_size': self.completed_steps*conf.batch_size, 'success': self.completed_steps > 0}
         results['utility'] = math.sqrt(
             self.loss_squre)*float(trained_samples)
 

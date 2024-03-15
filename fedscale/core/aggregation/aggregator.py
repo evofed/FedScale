@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from fedscale.core.model_manager import Model_Manager
+from fedscale.core.fluid_model_manager import Fluid_Model_Manager
 from concurrent import futures
 
 import grpc
@@ -89,11 +90,9 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
     def __init_evofed(self, args):
         # ======== model and data ========
-        self.model_in_training = []
-        self.mapped_models = {}
         # self.test_model_id = 0
         # self.test_result_accumulator = [[] for _ in range(0, len(self.model))]
-        self.test_result_accumulator = [[]]
+        self.test_result_accumulator = {}
         self.tasks_round = 0
         self.running_training_cost = .0
 
@@ -179,12 +178,9 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         else:
             model = init_model()
 
-        self.model_manager = Model_Manager(model, self.args, self.device)
+        self.model_manager = Fluid_Model_Manager(model, self.args)
 
-        if self.args.starting_width_scale > 1:
-            self.model_manager.model_width_scale(self.args.starting_width_scale, inplace=True)
-
-        logging.info(f"start model architecture:\n{self.model_manager.models[0].torch_model}")
+        # logging.info(f"start model architecture:\n{self.model_manager.models[0].torch_model}")
 
     def init_task_context(self):
         """Initiate execution context for specific tasks
@@ -301,17 +297,11 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
             if len(self.registered_executor_info) == len(self.executors):
                 self.client_register_handler(executorId, info)
-
-                self.model_manager.reset_all_curr_loss()
-
                 self.round_completion_handler()
         else:
             # In real deployments, we need to register for each client
             self.client_register_handler(executorId, info)
             if len(self.registered_executor_info) == len(self.executors):
-
-                self.model_manager.reset_all_curr_loss()
-
                 self.round_completion_handler()
     
     def tictak_client_tasks(self, sampled_clients, num_clients_to_collect):
@@ -340,7 +330,7 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
                 model_id = 0 # reduce to one model running
                 exe_cost = self.client_manager.getCompletionTime(client_to_run,
                                                                  batch_size=client_cfg.batch_size, upload_step=client_cfg.local_steps,
-                                                                 upload_size=self.model_manager.get_model_update_size(model_id), download_size=self.model_manager.get_model_update_size(model_id))
+                                                                 upload_size=self.model_manager.get_model_update_size(), download_size=self.model_manager.get_model_update_size())
                                                                 #  upload_size=self.model_update_size[model_id], download_size=self.model_update_size[model_id])
 
                 cap = self.client_manager.get_capacity(client_to_run)
@@ -456,9 +446,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             results['update_weight'][p] = torch.from_numpy(
                 results['update_weight'][p]).to(device=self.device)
         
-        comming_model_id = self.mapped_models[client_id]
         results['cap'] = self.client_manager.get_capacity(client_id)
-        self.model_manager.weight_aggregation(results, comming_model_id)
+        self.model_manager.weight_aggregation(results)
             
     def save_last_param(self):
         """ Save the last model parameters
@@ -473,64 +462,23 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             self.model_manager.load_model_weight()
     
     def save_model(self):
-        self.model_manager.save_models()
-
-    def transform_model(self):
-        self.save_model()
-        # self.model_manager.model_scale_single()
-        self.model_manager.model_scale()
-        logging.info(f"check macs after transformation {self.model_manager.get_all_macs()}")
-
-    def write_stats(self):
-        # int          int               int       list(int)       list(dict) list(dict)    list(float)
-        num_models, num_converging, num_converged, trained_rounds, utilities, curr_loss, model_average_loss \
-            = self.model_manager.check_status()
-        trained_clients = [client_id for client_id in self.mapped_models]
-        model_loss = [.0 for _ in range(num_models)]
-        model_clients = [.0 for _ in range(num_models)]
-        client_utility = {}
-        for client_id in trained_clients:
-            model_id = self.mapped_models[client_id]
-            model_clients[model_id] += 1
-            model_loss[model_id] += curr_loss[model_id][client_id]
-            client_utility[client_id] = utilities[model_id][client_id]
-        average_loss = sum(model_average_loss) / float(len(model_average_loss))
-        write_aggregated_stats(self.round, num_model=num_models, num_converging=num_converging,
-                               num_converged=num_converged, average_loss=average_loss, 
-                               average_test_accuracy=self.average_test_accuracy, tmstp_on_completion=None)
-
-        for model_id in range(num_models):
-            # average_model_loss = model_loss[model_id] / model_clients[model_id]
-            average_test_accuracy = None if model_id not in self.model_accuracy else self.model_accuracy[model_id]
-            writer_model_stats(model_id=model_id, num_round=self.round, trained_round=trained_rounds[model_id],
-                               loss=model_average_loss[model_id], average_test_accuracy=average_test_accuracy)
-        
-        for client_id in trained_clients:
-            best_model = None if client_id not in self.client_best_model else self.client_best_model[client_id]
-            test_accuracy = None if client_id not in self.client_accuracy else self.client_accuracy[client_id]
-            write_client_stats(client_id=client_id, num_round=self.round, trained_model=self.mapped_models[client_id],
-                               utility=client_utility[client_id], best_model=best_model, 
-                               test_accuracy=test_accuracy)
+        self.model_manager.save_model()
 
     def round_completion_handler(self):
         """Triggered upon the round completion, it registers the last round execution info,
         broadcast new tasks for executors and select clients for next round.
         """
-        # calculate training cost
-        for client_id in self.mapped_models:
-            model_id = self.mapped_models[client_id]
+        # STEP-1: calculate training cost
+        for client_id in self.model_manager.get_clients():
             if self.args.local_training == 'step':
-                client_training_cost = self.model_manager.get_model_mac(model_id) * 3 * self.args.local_steps * self.args.batch_size
+                client_training_cost = self.model_manager.get_model_mac_by_client(client_id) * 3 * self.args.local_steps * self.args.batch_size
             else:
-                client_training_cost = self.model_manager.get_model_mac(model_id) * 3 * self.args.local_steps * 655493 / 100
+                client_training_cost = self.model_manager.get_model_mac_by_client(client_id) * 3 * self.args.local_steps * 655493 / 100
             self.running_training_cost += client_training_cost
-        
         logging.info(f"round {self.round}, running trainig cost: {self.running_training_cost}")
-        self.model_manager.save_models()
 
-        if self.round > 1:
-            self.model_manager.update_utility(self.mapped_models, self.current_clients_cap)
-            self.write_stats()
+        # STEP-2: save models
+        self.model_manager.save_model()
 
         self.global_virtual_clock += self.round_duration
         self.round += 1
@@ -561,13 +509,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         # dump round completion information to tensorboard
         if len(self.loss_accumulator):
             self.log_train_result(avg_loss)
-        if self.model_manager.is_converging() and self.args.enforce_transform < 0:
-            logging.info("FL Transforming")
-            self.transform_model()
-        elif self.args.enforce_transform == self.round:
-            logging.info("FL Transforming")
-            self.transform_model()
-        self.model_manager.reset_all_curr_loss()
 
         # update select participants
         if self.args.data_map_file is None: # iid with out clients' trace
@@ -581,12 +522,48 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.current_clientsToRun = clientsToRun
         self.current_clients_cap = clients_cap
 
+        # customization BEGIN ======
+        # STEP-3: identify invariant neurons
+        # 1. if this is the first round, we need to initialize the threshold with the average min grad-diff
+        # 2. if a neuron's grad-diff is less than the threshold for 75% #(non-straggler clients), then it is an invariant neuron
+        # 3. produce two lists
+        #   - invariant neurons in this round
+        #   - neurons dropped last round and still invariant this round
+
+        if self.round == 1:
+            self.model_manager.init_th()
+        else:
+            self.model_manager.identify_invariant_neurons()
+
+        # STEP-4: determine stragglers and calculate desired speed up
+        # 1. if a client's training time is more than the target, it is a straggler
+        # 2. speed up = next slowest client's training time / the slowest client's training time
+
+        # STEP-5: calibrate drop rates
+        # diff >= 0.9 -> drop rate = 0.95
+        # 0.9 > diff >= 0.8 -> drop rate = 0.85
+        # 0.8 > diff >= 0.7 -> drop rate = 0.75
+        # 0.7 > diff >= 0.6 -> drop rate = 0.65
+        # otherwise drop rate = 0.55
+
+        # STEP-6: calibrate threshold
+        # 1. increament the threshold by xx after round 10
+
+            self.model_manager.calibrate(self.round)
+
+        # STEP-7: generate sub-models
+        # 0. for each straggler do the following
+        # 1. for each layer, select (1-p)% neurons to drop
+        # 2. prioritize persistent invariant neurons
+        # 3. then prioritize the rest of invariant neurons
+        # 3. finally do random if necessary
+        self.model_manager.register_tasks(clientsToRun, clients_cap, is_first_round=(self.round == 1))
+
+        # customization END ======
+
         logging.info(f"Selected participants to run: {clientsToRun}")
         # Issue requests to the resource manager; Tasks ordered by the completion time
-        self.mapped_models, self.model_in_training = self.model_manager.assign_tasks_hybrid(clientsToRun, clients_cap)
         self.resource_manager.register_tasks(clientsToRun)
-        logging.info(f"model(s) {self.model_in_training} will be trained in the next round")
-        logging.info(f"model assignment: {self.mapped_models}")
         self.tasks_round = len(clientsToRun)
 
         # Update executors and participants
@@ -602,7 +579,6 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         self.virtual_client_clock = virtual_client_clock
         self.flatten_client_duration = numpy.array(flatten_client_duration)
         self.round_duration = round_duration
-        self.model_manager.reset_model_in_update()
 
         self.stats_util_accumulator = []
         self.client_training_results = []
@@ -610,9 +586,10 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         if self.round >= self.args.rounds: 
             self.broadcast_aggregator_events(commons.SHUT_DOWN)
         elif self.round % self.args.eval_interval == 0:# or self.round == 1:
-            self.test_result_accumulator = [[] for _ in range(len(self.model_manager.models))]
-            self.model_manager.save_models()
-            self.model_to_test = self.model_manager.get_active_model_ids()
+            models_to_test = self.model_manager.prepare_to_test()
+            self.test_result_accumulator = {p: [] for p in models_to_test}
+            self.model_manager.save_model()
+            self.model_to_test = models_to_test
             logging.info(f"start to test model(s): {self.model_to_test}")
             self.broadcast_aggregator_events(commons.UPDATE_MODEL)
             self.broadcast_aggregator_events(commons.MODEL_TEST)
@@ -674,71 +651,69 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
 
         """
         self.test_received += 1
-        assert results['model_id'] == self.model_to_test[0]
-        model_id = results['model_id']
+        assert results['p'] == self.model_to_test[0]
+        p = results['p']
         results = results['results']
 
         # track client test results
         if len(results) > 1:
-            model_macs = self.model_manager.get_all_macs()
+            model_mac = self.model_manager.get_model_mac_by_p(p)
             for result in results:
                 client_id = result['client_id']
                 accuracy = result['acc']
                 if client_id not in self.client_accuracy:
                     self.client_accuracy[client_id] = .0
                 # logging.info(self.client_profiles.keys())
-                if self.args.disable_hardware:
-                    if accuracy > self.client_accuracy[client_id]:
-                        self.client_accuracy[client_id] = accuracy
-                        self.client_best_model[client_id] = model_id
-                else:
-                    if model_macs[model_id] <= float(self.client_profiles[client_id]['macs'])\
-                        and accuracy > self.client_accuracy[client_id]:
-                        self.client_accuracy[client_id] = accuracy
-                        self.client_best_model[client_id] = model_id
-                    
+                if model_mac <= float(self.client_profiles[client_id]['macs'])\
+                    and accuracy > self.client_accuracy[client_id]:
+                    self.client_accuracy[client_id] = accuracy
+                    self.client_best_model[client_id] = p
+                if self.client_accuracy[client_id] == .0 and p == 0.5:
+                    self.client_accuracy[client_id] = accuracy
+                    self.client_best_model[client_id] = p
+
 
         # List append is thread-safe
-        self.test_result_accumulator[model_id] += results
+        self.test_result_accumulator[p] += results
 
         # Have collected all testing results
         if self.test_received == len(self.executors):
             self.test_received = 0
-            accumulator = self.test_result_accumulator[model_id][0]
-            for i in range(1, len(self.test_result_accumulator[model_id])):
+            accumulator = self.test_result_accumulator[p][0]
+            for i in range(1, len(self.test_result_accumulator[p])):
                 if self.args.task == "detection":
                     for key in accumulator:
                         if key == "boxes":
                             for j in range(self.imdb.num_classes):
                                 accumulator[key][j] = accumulator[key][j] + \
-                                    self.test_result_accumulator[model_id][i][key][j]
+                                    self.test_result_accumulator[p][i][key][j]
                         else:
-                            accumulator[key] += self.test_result_accumulator[model_id][i][key]
+                            accumulator[key] += self.test_result_accumulator[p][i][key]
                 else:
                     for key in accumulator:
-                        accumulator[key] += self.test_result_accumulator[model_id][i][key]
+                        accumulator[key] += self.test_result_accumulator[p][i][key]
             if self.args.task == "detection":
                 self.testing_history['perf'][self.round] = {'round': self.round, 'clock': self.global_virtual_clock,
-                                                            'model_id': model_id,
-                                                            'top_1': round(accumulator['top_1']*100.0/len(self.test_result_accumulator[model_id]), 4),
-                                                            'top_5': round(accumulator['top_5']*100.0/len(self.test_result_accumulator[model_id]), 4),
+                                                            'p': p,
+                                                            'top_1': round(accumulator['top_1']*100.0/len(self.test_result_accumulator[p]), 4),
+                                                            'top_5': round(accumulator['top_5']*100.0/len(self.test_result_accumulator[p]), 4),
                                                             'loss': accumulator['test_loss'],
                                                             'test_len': accumulator['test_len']
                                                             }
             else:
                 self.testing_history['perf'][self.round] = {'round': self.round, 'clock': self.global_virtual_clock,
-                                                            'model_id': model_id,
+                                                            'model_id': p,
                                                             'top_1': round(accumulator['top_1']/accumulator['test_len']*100.0, 4),
                                                             'top_5': round(accumulator['top_5']/accumulator['test_len']*100.0, 4),
                                                             'loss': accumulator['test_loss']/accumulator['test_len'],
                                                             'test_len': accumulator['test_len']
                                                             }
 
-            logging.info("FL Testing for model {} in round: {}, virtual_clock: {}, top_1: {} %, top_5: {} %, test loss: {:.4f}, test len: {}"
+            logging.info("FL Testing for model p {} in round: {}, virtual_clock: {}, top_1: {} %, top_5: {} %, test loss: {:.4f}, test len: {}"
                          .format(self.model_to_test[0], self.round, self.global_virtual_clock, self.testing_history['perf'][self.round]['top_1'],
                                  self.testing_history['perf'][self.round]['top_5'], self.testing_history['perf'][self.round]['loss'],
                                  self.testing_history['perf'][self.round]['test_len']))
-            self.model_accuracy[model_id] = self.testing_history['perf'][self.round]['top_1']
+            self.model_accuracy[p] = self.testing_history['perf'][self.round]['top_1']
             self.model_to_test.pop(0)
             # Dump the testing result
             with open(os.path.join(logDir, 'testing_perf'), 'wb') as fout:
@@ -799,11 +774,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             dictionary: Client training config.
 
         """
-        model_id = self.mapped_models[clientId]
         conf = {
-            'learning_rate': self.args.learning_rate,
-            'model': None,  # none indicates we are using the global model
-            'layer_names': self.model_manager.get_candidate_layers(model_id)
+            'learning_rate': self.args.learning_rate
         }
         return conf
 
@@ -820,10 +792,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
         next_clientId = self.resource_manager.get_next_task(executorId)
         train_config = None
         # NOTE: model = None then the executor will load the global model broadcasted in UPDATE_MODEL
-        model = None
         if next_clientId != None:
-            # model = self.mapped_models[next_clientId]
-            model = self.mapped_models[next_clientId] # reduce to one model
+            model = self.model_manager.get_model(next_clientId) # reduce to one model
             config = self.get_client_conf(next_clientId)
             train_config = {'client_id': next_clientId, 'task_config': config}
         return train_config, model
@@ -831,7 +801,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
     def get_test_config(self, client_id):
         """FL model testing on clients"""
 
-        return {'client_id': client_id}, self.model_to_test[0]
+        return {'client_id': client_id, 'p': self.model_to_test[0]}, \
+            self.model_manager.get_model_by_p(self.model_to_test[0])
 
     def get_global_model(self):
         """Get global model that would be used by all FL clients (in default FL)
@@ -840,9 +811,8 @@ class Aggregator(job_api_pb2_grpc.JobServiceServicer):
             PyTorch or TensorFlow module: Based on the executor's machine learning framework, initialize and return the model for training.
 
         """
-        models = self.model_manager.get_all_models()
-        # logging.info(f"upload model {models[0].state_dict()} to client")
-        return models
+        model = self.model_manager.model
+        return model
 
     def get_shutdown_config(self, client_id):
         """Shutdown config for client, developers can further define personalized client config here.

@@ -210,11 +210,11 @@ class Executor(object):
 
     def Train(self, config):
         """Load train config and data to start training on client """
-        client_id, train_config, model_id = config['client_id'], config['task_config'], config['model_id']
+        client_id, train_config = config['client_id'], config['task_config']
 
         client_conf = self.override_conf(train_config)
         train_res = self.training_handler(
-            clientId=client_id, conf=client_conf, model_id=model_id)
+            clientId=client_id, conf=client_conf, model=model)
 
         # Report execution completion meta information
         response = self.aggregator_communicator.stub.CLIENT_EXECUTE_COMPLETION(
@@ -231,8 +231,8 @@ class Executor(object):
     def Test(self, config):
         """Model Testing. By default, we test the accuracy on all data of clients in the test group"""
 
-        test_res = self.testing_handler(args=self.args, model_id=config['model_id'])
-        test_res = {'executorId': self.this_rank, 'results': test_res, 'model_id': config['model_id']}
+        test_res = self.testing_handler(args=self.args, model=config['model'], p=config['p'])
+        test_res = {'executorId': self.this_rank, 'results': test_res, 'p': config['p']}
 
         # Report execution completion information
         response = self.aggregator_communicator.stub.CLIENT_EXECUTE_COMPLETION(
@@ -315,7 +315,7 @@ class Executor(object):
         """
         return Client(conf)
 
-    def training_handler(self, clientId, conf, model_id):
+    def training_handler(self, clientId, conf, model):
         """Train model given client id
         
         Args:
@@ -327,7 +327,7 @@ class Executor(object):
         
         """
         # load last global model
-        client_model = self.model[model_id]
+        client_model = model
 
         conf.clientId, conf.device = clientId, self.device
         conf.tokenizer = tokenizer
@@ -348,7 +348,7 @@ class Executor(object):
 
         return train_res
 
-    def testing_handler(self, args, model_id):
+    def testing_handler(self, args, model, p):
         """Test model
         
         Args:
@@ -360,7 +360,6 @@ class Executor(object):
         """
         evalStart = time.time()
         device = self.device
-        model = self.load_global_model()[model_id]
         all_test_results = []
         if self.task == 'rl':
             client = RLClient(args)
@@ -368,7 +367,7 @@ class Executor(object):
             _, _, _, testResults = test_res
         else:
             if self.round % self.args.client_eval_interval == 0:
-                all_test_results = self.client_testing(args, model_id, evalStart, device, model)
+                all_test_results = self.client_testing(args, evalStart, device, model, p)
             else:
                 all_test_results = []
                 data_loader = select_dataset(self.this_rank, self.server_testing_sets,
@@ -395,7 +394,7 @@ class Executor(object):
 
         return all_test_results
 
-    def client_testing(self, args, model_id, evalStart, device, model):
+    def client_testing(self, args, evalStart, device, model, p):
         all_test_results = []
         for client_id in self.client_partition:
             data_loader = select_dataset(client_id, self.client_testing_sets,
@@ -414,8 +413,8 @@ class Executor(object):
                 raise Exception(f"Need customized implementation for model testing in {self.args.engine} engine")
 
             test_loss, acc, acc_5, testResults = test_res
-            logging.info("Client {} at model {}: After aggregation round {}, CumulTime {}, eval_time {}, test_loss {}, test_accuracy {:.2f}%, test_5_accuracy {:.2f}% \n"
-                             .format(client_id, model_id, self.round, round(time.time() - self.start_run_time, 4), round(time.time() - evalStart, 4), test_loss, acc*100., acc_5*100.))
+            logging.info("Client {} at p {}: After aggregation round {}, CumulTime {}, eval_time {}, test_loss {}, test_accuracy {:.2f}%, test_5_accuracy {:.2f}% \n"
+                             .format(client_id, p, self.round, round(time.time() - self.start_run_time, 4), round(time.time() - evalStart, 4), test_loss, acc*100., acc_5*100.))
             all_test_results.append(testResults)
         return all_test_results
 
@@ -461,7 +460,7 @@ class Executor(object):
 
                 if current_event == commons.CLIENT_TRAIN:
                     train_config = self.deserialize_response(request.meta)
-                    train_config['model_id'] = self.deserialize_response(request.data)
+                    train_config['model'] = self.deserialize_response(request.data)
                     train_config['client_id'] = int(train_config['client_id'])
                     client_id, train_res = self.Train(train_config)
 
@@ -475,7 +474,7 @@ class Executor(object):
 
                 elif current_event == commons.MODEL_TEST:
                     config = self.deserialize_response(request.meta)
-                    config['model_id'] = self.deserialize_response(request.data)
+                    config['model'] = self.deserialize_response(request.data)
                     self.Test(config)
 
                 elif current_event == commons.UPDATE_MODEL:
